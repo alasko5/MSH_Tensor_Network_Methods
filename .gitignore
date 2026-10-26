@@ -1,0 +1,14 @@
+# Jupyter
+.ipynb_checkpoints/
+.virtual_documents/
+
+# Python
+__pycache__/
+*.pyc
+
+# Large data / results (GitHub rejects files > 100 MB)
+*.npz
+*.npy
+*.jls
+*.h5
+*_data/
