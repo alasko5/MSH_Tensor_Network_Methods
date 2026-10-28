@@ -25,8 +25,8 @@ Committed CSVs (small results that other notebooks read):
 | --- | --- | --- |
 | `msh_array_ldos_tn.csv` | `msh_tjunctions_tn.ipynb` | `tjunctions_compare.ipynb` |
 | `msh_gate_density_tn_{Z,X}.csv` | `msh_tjunctions_tn.ipynb` (exact evolution) | `tjunctions_compare.ipynb` |
-| `msh_gate_density_tdvp_{Z,X}.csv` | offline TDVP run (`msh_gate_density_tdvp.jl`, 1–2 h per mode) | `msh_tjunctions_tn.ipynb` (section 7), `tjunctions_compare.ipynb` |
-| `msh_gate_dQ_tdvp_{Z,X}.csv` | computed from the TDVP snapshots (`tdvp_snapshots_*.jls`) | `msh_tjunctions_tn.ipynb` (section 7), `tjunctions_compare.ipynb` |
+| `msh_gate_density_tdvp_{Z,X}.csv` | MPS/TDVP run of the full protocol, outside the notebook (1–2 h per mode) | `msh_tjunctions_tn.ipynb` (section 7), `tjunctions_compare.ipynb` |
+| `msh_gate_dQ_tdvp_{Z,X}.csv` | computed from the full TDVP states of the same run | `msh_tjunctions_tn.ipynb` (section 7), `tjunctions_compare.ipynb` |
 
 Caches and large outputs (`*.jls`, `*.npz`, `*.npy`, `*.h5`, `*_data/`, `tb_reference/`) are not committed (see `.gitignore`). The
 notebooks write them next to themselves on the first run and load them afterwards:
