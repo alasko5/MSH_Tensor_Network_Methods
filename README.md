@@ -9,7 +9,7 @@ Python/kwant notebooks.
 
 | Notebook | Kernel | What it does |
 | --- | --- | --- |
-| `msh_chain_ldos.ipynb` | Julia 1.13 | Single MSH chain as an MPO. LDOS by exact diagonalization and by TensorBinding's KPM at four snapshots of the spin ramp (fully topological → fully trivial), Majorana zero modes and the fermion mode (DMRG), charge difference ΔQ between the logical states, time-dependent spin ramp (TDVP) and ramp-parameter scans. Ends with a number-by-number comparison against the Python reference. |
+| `msh_chain_ldos.ipynb` | Julia 1.13 | Single MSH chain as an MPO. LDOS by exact diagonalization and by TensorBinding's KPM at four snapshots of the spin ramp (fully topological → fully trivial), Majorana zero modes and the fermion mode (DMRG), charge difference ΔQ between the logical states and the time-dependent spin ramp (TDVP). Ends with a number-by-number comparison against the Python reference. |
 | `ferromagnetic_spin_chain_msh_compare.ipynb` | Python (`myenv`) | Dense NumPy reference for `msh_chain_ldos.ipynb`: same model, same ramp snapshots and protocols. Writes `msh_compare_python.npz`, which the Julia notebook reads. |
 | `msh_tjunctions_tn.ipynb` | Julia 1.13 | Three-T-junction MSH array: MPO Hamiltonian, subgap LDOS and Majoranas from DMRG, Z and X gates with partial-fusion readout (logical gate, ΔQ, δn(x, t)), and the full MPS/TDVP evolution compared with the exact one and with kwant. |
 | `msh_tjunction_gates.ipynb` | Julia 1.13 | Earlier gate-only version of the T-junction calculation. Superseded by `msh_tjunctions_tn.ipynb`; kept for reference. |
@@ -31,16 +31,16 @@ Caches and large outputs (`*.jls`, `*.npz`, `*.npy`, `*.h5`, `*_data/`) are not 
 notebooks write them next to themselves on the first run and load them afterwards:
 
 - `msh_chain_ldos.ipynb`: `msh_chain_ldos_kpm_ramp.jls` (KPM LDOS, ~30 min), `msh_chain_charge.jls` (~10 min),
-  `msh_chain_ramp.jls` (~4 min), `msh_chain_ramp_scan.jls` (~1 h). Set the matching `RUN_*` flag to `true` to recompute.
+  `msh_chain_ramp.jls` (~4 min). Set the matching `RUN_*` flag to `true` to recompute.
 - `ferromagnetic_spin_chain_msh_compare.ipynb`: `msh_compare_python.npz`.
 
 ## Running
 
 1. **Julia notebooks.** Julia 1.13 with an IJulia kernel and these packages in the active environment:
-   `TensorBinding` (0.2.0, General registry), `ITensors`, `ITensorMPS`, `Plots`, `NPZ`, `FFTW`, `IJulia`.
+   `TensorBinding` (0.2.0, General registry), `ITensors`, `ITensorMPS`, `Plots`, `NPZ`, `IJulia`.
    ```julia
    using Pkg
-   Pkg.add(["TensorBinding", "ITensors", "ITensorMPS", "Plots", "NPZ", "FFTW", "IJulia"])
+   Pkg.add(["TensorBinding", "ITensors", "ITensorMPS", "Plots", "NPZ", "IJulia"])
    ```
 2. **Python notebooks.** A conda environment with `numpy`, `scipy`, `matplotlib`, `numba`, `ipywidgets`, `tqdm`
    and `kwant` (developed with kwant 1.5, NumPy 2.3, SciPy 1.16).
