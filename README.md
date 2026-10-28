@@ -7,15 +7,15 @@ Python/kwant notebooks.
 
 ## Notebooks
 
-| Notebook | Kernel | What it does |
+| Notebook | Language | What it does |
 | --- | --- | --- |
-| `msh_chain_tn.ipynb` | Julia 1.13 | Single MSH chain as an MPO. LDOS by exact diagonalization and by TensorBinding's KPM at four snapshots of the spin ramp (fully topological → fully trivial), Majorana zero modes and the fermion mode (DMRG), charge difference ΔQ between the logical states and the time-dependent spin ramp (TDVP). Saves its results to `msh_chain_tn_results.npz`. |
-| `msh_chain_python_ed.ipynb` | Python (`myenv`) | Dense NumPy reference for `msh_chain_tn.ipynb`: same model, same ramp snapshots and protocols. Writes `msh_compare_python.npz`. |
-| `msh_chain_compare.ipynb` | Python (`myenv`) | Number-by-number comparison of the two MSH chain notebooks: loads `msh_chain_tn_results.npz` and `msh_compare_python.npz`, prints one ✓/✗ row per quantity (dense against dense to round-off, tensor networks against dense to their truncation error) and plots the overlays. |
-| `msh_tjunctions_tn.ipynb` | Julia 1.13 | Three-T-junction MSH array: MPO Hamiltonian, subgap LDOS and Majoranas from DMRG, Z and X gates with partial-fusion readout (logical gate, ΔQ, δn(x, t)), and the full MPS/TDVP evolution compared with the exact one and with kwant. |
-| `msh_tjunction_gates.ipynb` | Julia 1.13 | Earlier gate-only version of the T-junction calculation. Superseded by `msh_tjunctions_tn.ipynb`; kept for reference. |
-| `3_tjunctions_kwant_ldos_density.ipynb` | Python (`myenv`) | kwant version of the T-junction array with the geometry and protocols of the TensorBinding notebooks: LDOS and charge density for the comparison. |
-| `kitaev_charge_difference.ipynb` | Julia 1.13 | Kitaev chain: fermion mode from the DMRG Majorana doublet, KPM LDOS, McWeeny bulk projector with ϵF = −(E_mode + E_gap)/2, ΔQ versus topological length, and a time-dependent smoothstep ramp that fuses the Majoranas (TDVP, with TDVP and McWeeny bulk densities). |
+| `msh_chain_tn.ipynb` | Julia | Single MSH chain as an MPO. LDOS by exact diagonalization and by TensorBinding's KPM at four snapshots of the spin ramp (fully topological → fully trivial), Majorana zero modes and the fermion mode (DMRG), charge difference ΔQ between the logical states and the time-dependent spin ramp (TDVP). Saves its results to `msh_chain_tn_results.npz`. |
+| `msh_chain_python_ed.ipynb` | Python | Dense NumPy reference for `msh_chain_tn.ipynb`: same model, same ramp snapshots and protocols. Writes `msh_compare_python.npz`. |
+| `msh_chain_compare.ipynb` | Python | Number-by-number comparison of the two MSH chain notebooks: loads `msh_chain_tn_results.npz` and `msh_compare_python.npz`, prints one ✓/✗ row per quantity (dense against dense to round-off, tensor networks against dense to their truncation error) and plots the overlays. |
+| `msh_tjunctions_tn.ipynb` | Julia | Three-T-junction MSH array: MPO Hamiltonian, subgap LDOS and Majoranas from DMRG, Z and X gates with partial-fusion readout (logical gate, ΔQ, δn(x, t)), and the full MPS/TDVP evolution compared with the exact one and with kwant. |
+| `msh_tjunction_gates.ipynb` | Julia | Earlier gate-only version of the T-junction calculation. Superseded by `msh_tjunctions_tn.ipynb`; kept for reference. |
+| `3_tjunctions_kwant_ldos_density.ipynb` | Python | kwant version of the T-junction array with the geometry and protocols of the TensorBinding notebooks: LDOS and charge density for the comparison. |
+| `kitaev_charge_difference.ipynb` | Julia | Kitaev chain: fermion mode from the DMRG Majorana doublet, KPM LDOS, McWeeny bulk projector with ϵF = −(E_mode + E_gap)/2, ΔQ versus topological length, and a time-dependent smoothstep ramp that fuses the Majoranas (TDVP, with TDVP and McWeeny bulk densities). |
 
 ## Data files
 
