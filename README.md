@@ -9,8 +9,9 @@ Python/kwant notebooks.
 
 | Notebook | Kernel | What it does |
 | --- | --- | --- |
-| `msh_chain_tn.ipynb` | Julia 1.13 | Single MSH chain as an MPO. LDOS by exact diagonalization and by TensorBinding's KPM at four snapshots of the spin ramp (fully topological → fully trivial), Majorana zero modes and the fermion mode (DMRG), charge difference ΔQ between the logical states and the time-dependent spin ramp (TDVP). Ends with a number-by-number comparison against the Python reference. |
-| `msh_chain_python_ed.ipynb` | Python (`myenv`) | Dense NumPy reference for `msh_chain_tn.ipynb`: same model, same ramp snapshots and protocols. Writes `msh_compare_python.npz`, which the Julia notebook reads. |
+| `msh_chain_tn.ipynb` | Julia 1.13 | Single MSH chain as an MPO. LDOS by exact diagonalization and by TensorBinding's KPM at four snapshots of the spin ramp (fully topological → fully trivial), Majorana zero modes and the fermion mode (DMRG), charge difference ΔQ between the logical states and the time-dependent spin ramp (TDVP). Saves its results to `msh_chain_tn_results.npz`. |
+| `msh_chain_python_ed.ipynb` | Python (`myenv`) | Dense NumPy reference for `msh_chain_tn.ipynb`: same model, same ramp snapshots and protocols. Writes `msh_compare_python.npz`. |
+| `msh_chain_compare.ipynb` | Python (`myenv`) | Number-by-number comparison of the two MSH chain notebooks: loads `msh_chain_tn_results.npz` and `msh_compare_python.npz`, prints one ✓/✗ row per quantity (dense against dense to round-off, tensor networks against dense to their truncation error) and plots the overlays. |
 | `msh_tjunctions_tn.ipynb` | Julia 1.13 | Three-T-junction MSH array: MPO Hamiltonian, subgap LDOS and Majoranas from DMRG, Z and X gates with partial-fusion readout (logical gate, ΔQ, δn(x, t)), and the full MPS/TDVP evolution compared with the exact one and with kwant. |
 | `msh_tjunction_gates.ipynb` | Julia 1.13 | Earlier gate-only version of the T-junction calculation. Superseded by `msh_tjunctions_tn.ipynb`; kept for reference. |
 | `3_tjunctions_kwant_ldos_density.ipynb` | Python (`myenv`) | kwant version of the T-junction array with the geometry and protocols of the TensorBinding notebooks: LDOS and charge density for the comparison. |
@@ -31,7 +32,8 @@ Caches and large outputs (`*.jls`, `*.npz`, `*.npy`, `*.h5`, `*_data/`) are not 
 notebooks write them next to themselves on the first run and load them afterwards:
 
 - `msh_chain_tn.ipynb`: `msh_chain_ldos_kpm_ramp.jls` (KPM LDOS, ~30 min), `msh_chain_charge.jls` (~10 min),
-  `msh_chain_ramp.jls` (~4 min). Set the matching `RUN_*` flag to `true` to recompute.
+  `msh_chain_ramp.jls` (~4 min). Set the matching `RUN_*` flag to `true` to recompute. Its last section writes
+  `msh_chain_tn_results.npz`.
 - `msh_chain_python_ed.ipynb`: `msh_compare_python.npz`.
 
 ## Running
@@ -44,9 +46,9 @@ notebooks write them next to themselves on the first run and load them afterward
    ```
 2. **Python notebooks.** A conda environment with `numpy`, `scipy`, `matplotlib`, `numba`, `ipywidgets`, `tqdm`
    and `kwant` (developed with kwant 1.5, NumPy 2.3, SciPy 1.16).
-3. **Order for the MSH chain comparison.** Run `msh_chain_python_ed.ipynb` first, in this directory, to
-   write `msh_compare_python.npz`. Then run `msh_chain_tn.ipynb`; its last section compares every quantity with the
-   Python results and prints a ✓/✗ table.
+3. **MSH chain comparison.** Run `msh_chain_python_ed.ipynb` (about 4 minutes) and `msh_chain_tn.ipynb` (a few minutes
+   with its caches), in either order, in this directory. Then run `msh_chain_compare.ipynb`, which loads the two `.npz` files
+   and prints a ✓/✗ table.
 4. **T-junction array.** `msh_tjunctions_tn.ipynb` runs end to end in about 12 minutes single-threaded. Its TDVP
    comparison uses the committed `msh_gate_*_tdvp_*.csv` files instead of rerunning TDVP.
 
