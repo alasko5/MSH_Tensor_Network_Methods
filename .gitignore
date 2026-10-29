@@ -11,9 +11,21 @@ __pycache__/
 *.npy
 *.jls
 *.h5
-*_data/
+*_data/*
+# ...except the small result files the two compare notebooks load, so they run from a fresh clone
+!msh_chain_tn_results.npz
+!msh_compare_python.npz
+!tjunctions_python_ed_data/*.npz
 tb_reference/
 tdvp_progress.log
 tdvp_status.txt
 nb_*.png
 msh_chain_ldos.png
+
+# docs/src build products (figures are extracted from the notebooks by docs/src/figures.py)
+docs/src/*/figs/
+docs/src/*/main.pdf
+docs/src/*/*.log
+docs/src/*/*.aux
+docs/src/*/*.out
+docs/src/*/*.toc

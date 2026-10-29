@@ -1,0 +1,383 @@
+%======================================================================
+\section{Part II --- Python/kwant notebook (\code{tjunctions\_python\_ed.ipynb})}
+%======================================================================
+
+The same geometry, texture and protocols, with exact diagonalization and an exact evolution of the full BdG basis. The gate analysis
+follows the construction of the user's CZ, QFT and period-finding notebooks: \code{individual\_MZMs}, \code{fix\_unitary}, logical-state
+\code{masks} and the Gauss--Legendre \code{step}.
+
+\subsection{Setup (cells 1--2)}
+
+\code{OMP\_NUM\_THREADS}, \code{OPENBLAS\_NUM\_THREADS} and \code{MKL\_NUM\_THREADS} are set to 1 before NumPy is imported (the comment: for
+tiny matrices threaded BLAS only adds contention; it also makes the timings single-thread). \code{DATA\_DIR = "tjunctions\_python\_ed\_data"}
+receives figures and \code{.npz} files. Cell 2 defines the Pauli matrices \code{tau\_0, tau\_x, tau\_y, tau\_z} and the Kronecker products
+\code{txs0} $=\tau_x\sigma_0$, \code{t0sx}, \code{t0sy}, \code{t0sz}, \code{tzsx}, \code{tzsy}, \code{tzs0}, \code{tysy}, and \code{tysx}, \code{tys0} for the unused spinor branches of \code{PHconj} (first factor Nambu,
+second spin).
+
+%----------------------------------------------------------------------
+\subsection{Section 1: geometry}
+
+Constants: \code{NLEG = 16} (sites per arm, Julia \code{TArray} with $L = 4$), \code{NCELL = 3}, \code{SPACING = 32},
+\code{ARM\_ANG}, \code{ARM\_ORIG}, \code{ARM\_DIR} = $((1,0), (-1,0), (0,1))$.
+
+\begin{function}{center\_x(c), array\_pos(c, s, n), label}
+As in Julia: $x_c = (c - 2)\cdot32$ and $\mathbf r(c,s,n) = (x_c,0) + \mathbf o_s + n\hat e_s$ (integers). \code{label} is the dictionary
+$(x,y)\mapsto(c,s,n)$ over all 144 sites, used to evaluate textures at kwant sites.
+\end{function}
+
+\begin{function}{build\_system\_3T()}
+\begin{Verbatim}
+def build_system_3T():
+    def chain(site, mu, Delta, J, S):
+        Sx, Sy, Sz = S[site.tag]
+        JS = J * (Sx * t0sx + Sy * t0sy + Sz * t0sz)
+        return -mu * tzs0 + Delta * txs0 + JS
+    def hop_x(sitei, sitej, t, alpha):
+        return -t * tzs0 + 1j * alpha * tzsy
+    def hop_y(sitei, sitej, t, alpha):
+        return -t * tzs0 - 1j * alpha * tzsx
+\end{Verbatim}
+Finalized kwant system on a square lattice with four orbitals per site, basis $(c_\uparrow, c_\downarrow, c^\dagger_\downarrow, -c^\dagger_\uparrow)$.
+Every site in \code{label} gets the on-site function \code{chain}: $-\mu\tau_z + \Delta\tau_x + J\,\tau_0\,\mathbf S\cdot\boldsymbol\sigma$, with the
+moment looked up in the parameter \code{S} (a dict keyed by site tag). \code{HoppingKind} adds $x$ and $y$ bonds between every pair of
+existing neighbouring sites, so the junction and inter-cell bonds appear automatically. Output: 144 sites, $x = -48\dots47$, legs at
+$x = -32, 0, 32$.
+\end{function}
+
+%----------------------------------------------------------------------
+\subsection{Section 2: spin texture and protocols}
+
+Line-by-line ports of the Julia code (Part I, section 2): \code{smoothstep}, \code{f0}, classes \code{Exchange12}, \code{Exchange23},
+\code{Fusion} with a \code{duration()} method, \code{f\_horizontal\_12}, \code{f\_vertical\_12}, \code{f\_braid\_12}, \code{f\_array\_12}
+(Julia \code{f\_array\_braid}), \code{f\_h23}, \code{f\_v23}, \code{f\_array\_23} (which contains the cell-2 map of Julia's \code{f\_cell2\_23}),
+and \code{f\_fuse(q, t)} (uses \code{f0} from the global scope and \code{NLEG} instead of the hard-coded 16). The leg maps are identical,
+including the clamping of the outer sites ($\max(L_1-n, 0)$, $\min(n, L_2)$) and the linear map of cell 2's left arm.
+
+\begin{function}{spins(f)}
+Returns the dict \code{S[(x, y)]} $=(\cos\phi\sin\theta, \sin\phi\sin\theta, \cos\theta)$ with $\theta = (-1)^{x+y}(\pi/2)f(c,s,n)$ and
+$\phi = \theta_{\rm arm}+\pi/2$ for all sites; the kwant parameter \code{S}.
+\end{function}
+
+%----------------------------------------------------------------------
+\subsection{Section 3: Hamiltonian}
+
+\code{params = dict(t=1.0, mu=-7.0, alpha=0.9, Delta=2.4, J=5.8)}.
+
+\begin{function}{ham\_kwant(f, **kw)}
+Dense $4N\times4N$ matrix \code{sys.hamiltonian\_submatrix} for texture $f$, with \code{params} overridden by \code{kw}. Used for the
+reference checks; \code{H\_noJ = ham\_kwant(f0, J=0.0)} is the texture-independent part.
+\end{function}
+
+\begin{function}{exchange\_matrix(f, J), ham(f)}
+\code{exchange\_matrix} fills the $4\times4$ diagonal blocks $J(S_x\tau_0\sigma_x + S_y\tau_0\sigma_y + S_z\tau_0\sigma_z)$ in kwant's site order
+(\code{tags}). \code{ham(f) = H\_noJ + exchange\_matrix(f)}, i.e.\ $H(t) = H_{J=0} + J\sum\tau_0\,\mathbf S\cdot\boldsymbol\sigma$. The markdown
+states that this is identical to \code{ham\_kwant} and much faster; the check prints $\|H_{\rm fast} - H_{\rm kwant}\| = 0$, Hermiticity
+error 0 and particle--hole error $\|CH^*C + H\| = 0$ with $C = \mathbb1\otimes\tau_y\sigma_y$.
+\end{function}
+
+\begin{function}{Cop(v)}
+Particle--hole conjugation in the $(u_\uparrow, u_\downarrow, v_\downarrow, -v_\uparrow)$ basis: $C v = (\mathbb1_N\otimes\tau_y\sigma_y)\,v^*$, with
+$CH^*C = -H$. Used to check that the columns of \code{U\_fixed} are particle--hole partners.
+\end{function}
+
+%----------------------------------------------------------------------
+\subsection{Section 4: check against the Julia/TensorBinding array}
+
+Reads \code{tb\_reference/coords.txt} (raises \code{FileNotFoundError} with instructions if the TN notebook has not been run) and builds
+a $4N\times4N$ matrix \code{P} that maps kwant's site-major vector to Julia's nambu $\otimes$ spin $\otimes$ site order: for Julia site $j$ at
+kwant index $k$, \code{P[b*N + j, 4*k + a] = Wsite[b, a]} with
+\[
+W_{\rm site} = \begin{pmatrix}1&0&0&0\\0&1&0&0\\0&0&0&-1\\0&0&1&0\end{pmatrix},\qquad
+(u_\uparrow, u_\downarrow, v_\uparrow, v_\downarrow)_{\rm Julia} = (a, b, -d, c).
+\]
+
+\begin{function}{to\_tb\_basis(H)}
+$P H P^T$: the kwant matrix in Julia's basis. Each \code{.bin} file is read as \code{complex128}, reshaped in Fortran order. Results:
+\code{initial} $3.5\times10^{-12}$, \code{z\_t1020} $4.3\times10^{-10}$, \code{x100\_t485} $2.0\times10^{-9}$, \code{fuse\_t300}
+$1.9\times10^{-11}$, the same numbers as the MPO-vs-dense check of the TN notebook.
+\end{function}
+
+%----------------------------------------------------------------------
+\subsection{Section 5: subgap LDOS}
+
+Top-level code: \code{la.eigh(H0)} for all eigenpairs; \code{w\_site} sums $|U|^2$ over the four orbitals of each site (so it includes
+particle and hole); \code{g\_eta} is the Gaussian with $\eta = 0.01$; $A = w_{\rm site}\,g_\eta$ on 401 points of $[-0.2, 0.2]$. All eigenstates
+are included; the markdown notes that those at $|E|\ge0.268$ contribute less than $e^{-23}$ inside the window
+($(0.268-0.2)^2/2\eta^2\approx23$). Lowest $|E|$ (one per $\pm$ pair): $0, 0, 0.127, 0.2683$; $\max_{\mathbf r}A(\mathbf r,0) = 15.21$. Saved to
+\code{array\_ldos\_kwant.npz} (\code{x, y, omega, A}).
+
+\begin{function}{ldos\_figure(Amat, name, out, vmax)}
+Plots $A(\mathbf r, \omega=0)$ on the lattice grid (NaN outside the sites), with the in-plane moments as \code{quiver} arrows and the
+$\hat z$ moments as dots; saves to \code{out}. The Python counterpart of the Julia LDOS map (Fig.~\ref{fig:ldos}).
+\end{function}
+
+%----------------------------------------------------------------------
+\subsection{Section 6: Majoranas, fermion modes and logical states}
+
+\subsubsection*{Copied helper functions}
+
+\begin{function}{dag(A, axis1=-2, axis2=-1)}
+Hermitian conjugate: swaps the last two axes and conjugates; for a 1D array only conjugates.
+\end{function}
+
+\begin{function}{PHconj(psi, ordering="ltslts", spinor="udd-u")}
+\begin{Verbatim}
+def PHconj(psi, ordering="ltslts", spinor="udd-u"):
+    """Return the particle-hole conjugate C psi = (tau_y sigma_y) psi^* for the kwant spinor "udd-u".
+    ..."""
+\end{Verbatim}
+Particle--hole conjugate of the columns of \code{psi} ($4N_s\times n$). For the site-major ordering \code{"ltslts"} and the kwant spinor
+\code{"udd-u"} it applies $\tau_y\sigma_y$ to each site's four components of $\psi^*$ (the case used here). Other branches: spinor \code{"uddu"}
+($\tau_y\sigma_x$, \code{tysx}), \code{"udud"} ($\tau_y\sigma_0$, \code{tys0}) and a Nambu-outer ordering \code{"tsltsl"}. The matrices
+\code{tysx} $=\tau_y\sigma_x$ and \code{tys0} $=\tau_y\sigma_0$ are defined in cell 2, so every branch runs; only the default is used here.
+\end{function}
+
+\begin{function}{takagi(A)}
+\begin{Verbatim}
+def takagi(A):
+    """D, U = takagi(A)
+    Diagonalize a complex symmetric matrix as A = U D U^T
+    where U is unitary and D is diagonal."""
+\end{Verbatim}
+Takagi factorization of a complex symmetric matrix. \emph{Method (from the code and its comments):} (i) $B = A^\dagger A$ is Hermitian
+positive semidefinite; diagonalize $B = V b V^\dagger$. (ii) $C = V^TAV$ is complex symmetric with $C = X + iY$, $[X, Y] = 0$; diagonalize
+$X + Y$ (\code{eigh}) to get $W$, a simultaneous eigenbasis, and set $U = VW$. (iii) $z_i = (U^TAU)_{ii} = r_ie^{i\theta_i}$; multiply column $i$ of
+$U$ by $e^{-i\theta_i/2}$ (\code{(r/z)**0.5}) so the diagonal becomes real and non-negative. Returns \code{r} and \code{U.conj()}.
+
+\emph{Why it works} (now in the code comments). $C^\dagger C=V^\dagger A^\dagger AV=\mathrm{diag}(b)$ is real, and with $C=X+iY$ ($X$, $Y$ real
+symmetric) $C^\dagger C=X^2+Y^2+i[X,Y]$, so $[X,Y]=0$; one real orthogonal $W$ (the eigenvectors of $X+Y$, barring accidental degeneracy)
+diagonalizes both, and $U^TAU=W^TCW$ is diagonal. After the phase fix $U^TAU=\mathrm{diag}(r)$, i.e.\ $A=U^*\mathrm{diag}(r)U^\dagger$: the
+factor $Z$ of $A=ZDZ^T$ is $U^*$, hence \code{U.conj()}.
+\end{function}
+
+\begin{function}{individual\_MZMs(E, M, tol=1e-3, ordering, spinor)}
+\begin{Verbatim}
+    mask = np.abs(E) < tol
+    psi = M[:, mask]
+    C = dag(psi) @ PHconj(psi, ordering=ordering, spinor=spinor)
+    c, Z = takagi(C)
+    gamma = psi @ Z
+    x = np.repeat(xs, 4)   # x coordinate of each component (site-major ordering, see the markdown)
+    R = dag(gamma) * x @ gamma
+    r, O = np.linalg.eigh(R.real)  # Want O ortho to conserve C
+    mbs = gamma @ O
+\end{Verbatim}
+Separates individual Majoranas in the zero-energy subspace. (1) The subspace is $|E| < $ \code{tol} $=10^{-3}$; if it has an odd number of
+states the closest state outside is added with a warning. (2) $C_{ij} = \langle\psi_i|C\psi_j\rangle$ is the (complex symmetric) matrix of the
+antiunitary $C$ in the subspace; its Takagi vectors $Z$ give $\gamma = \psi Z$, eigenstates of $C$ (Majoranas): with $C_{\rm mat}=ZDZ^T$,
+$C\gamma=(C\psi)Z^*=\psi C_{\rm mat}Z^*=\psi ZD(Z^TZ^*)=\gamma D$, and $D=\mathbb 1$ for a subspace closed under $C$. (3) The position operator
+$R = \gamma^\dagger x\gamma$ is diagonalized with its real part ($R$ is real for Majoranas because $C$ commutes with $x$), so $O$ is real orthogonal and the $\gamma O$ stay eigenstates of $C$; the
+Majoranas come out localized and sorted by $x$. Returns \code{mbs, mask, M}.
+
+\emph{Change for this geometry} (from the markdown): the original localizes with \code{x = np.tile(range(N//4), 4)}, the site index. For the
+site-major ordering \code{4*site + c} this should be \code{np.repeat}, and here the site index is not ordered along the chain, so the operator
+uses the $x$ coordinate of each site, \code{np.repeat(xs, 4)}. The \code{ordering} and \code{spinor} arguments are passed on to \code{PHconj}; the
+default spinor is \code{"udd-u"}, kwant's, as in the call (the copied code had \code{"uddu"} as default and did not pass the arguments on). Output: 4 states, centres
+$x = -46.6, -17.5, 16.5, 45.6$.
+\end{function}
+
+\begin{function}{fix\_unitary(mbs, mask, M)}
+\begin{Verbatim}
+    U = np.array([[1, 1], [1j, -1j]]) / 2**0.5
+    phi = mbs @ np.kron(np.eye(n // 2), U)
+    ind = np.arange(n).reshape(n // 2, 2).swapaxes(0, 1).ravel()
+    phi = phi[:, ind]
+    ...
+    ind = np.arange(n).reshape(2, n // 2); ind[0] = np.flip(ind[0]); phi = phi[:, ind.ravel()]
+    M[:, mask] = phi
+\end{Verbatim}
+Writes fermions into the zero-energy columns so that the full unitary has the BdG form $M = \begin{psmallmatrix}U & V^*\\ V & U^*\end{psmallmatrix}$.
+Each consecutive Majorana pair $(\gamma_{2j-1},\gamma_{2j})$ becomes $(\gamma_{2j-1}\pm i\gamma_{2j})/\sqrt2$ (the columns of
+$U_2 = \tfrac1{\sqrt2}\begin{psmallmatrix}1&1\\ i&-i\end{psmallmatrix}$). The first reordering (\code{[0,2,1,3]} for four Majoranas) groups
+the ``$+$'' combinations before the ``$-$'' combinations; the second reverses the ``$+$'' group. For four Majoranas the zero-energy columns
+$2N-2,\dots,2N+1$ (the four middle eigenvectors of \code{eigh}) become
+\[
+\bigl(\tfrac{\gamma_3+i\gamma_4}{\sqrt2},\ \tfrac{\gamma_1+i\gamma_2}{\sqrt2},\ \tfrac{\gamma_1-i\gamma_2}{\sqrt2},\ \tfrac{\gamma_3-i\gamma_4}{\sqrt2}\bigr),
+\]
+so column $2N+k$ and column $2N-1-k$ are particle--hole partners ($C\gamma = \gamma$). The notebook calls columns $2N$, $2N+1$ $\psi_A$, $\psi_B$
+and requires them to have positive energy. With the Python Majoranas, $\psi_A$ is therefore $(\gamma_1 - i\gamma_2)/\sqrt2$; the TN code writes
+$(\gamma_1+i\gamma_2)/\sqrt2$ with its own sign of $\gamma_2$, which is a sign convention for $\gamma_2$ only (both are the positive-energy
+fermion of pair A). The reason for the second reordering (now in the code comment): in the \code{eigh} ordering of a BdG matrix,
+$E_{2N+k}=-E_{2N-1-k}$ and these two columns are $C$ partners, so placing $\varphi_k$ in column $2N-1-k$ and $C\varphi_k$ in column $2N+k$ keeps
+the fixed $M$ in BdG form and makes the masks (column $2N+k$ occupied $\Leftrightarrow$ column $2N-1-k$ empty) valid for any number of pairs.
+(The copied code computed the Majorana-to-fermion block twice; the duplicate has been removed.) \code{mbs2 = mbs[:, [0,1,2,3]]}
+pairs $(\gamma_1,\gamma_2)$ and $(\gamma_3,\gamma_4)$. Checks printed: column energies $(-1.158, -1.090, 1.090, 1.158)\times10^{-9}$ (an
+\code{assert} requires the last two to be positive; otherwise the order within a pair must be swapped), $\|U^\dagger U - 1\| = 6.5\times10^{-14}$,
+$\max\|C\psi_{2N+k} - \psi_{2N-1-k}\| = 2.2\times10^{-14}$. \code{psi0 = U\_fixed.copy()} is the initial full basis.
+\end{function}
+
+\subsubsection*{Logical states}
+
+\code{masks} is a $4\times4N$ boolean array, one row per state $\ket{n_An_B}$: $\ket{00}$, $\ket{01}$, $\ket{10}$, $\ket{11}$. Columns $2N, 2N+1$
+are set to the occupations of $\psi_A$, $\psi_B$; all higher columns are empty; the lower half is set by
+\code{masks[:, :2N] = np.flip(\textasciitilde masks[:, 2N:], axis=1)}, so a column below $2N$ is occupied exactly when its particle--hole partner
+is empty. Thus $\ket{00}$ occupies all $2N$ negative-energy columns (including $C\psi_A$, $C\psi_B$), and $\ket{11}$ occupies $\psi_A,\psi_B$
+instead of $C\psi_A, C\psi_B$. The logical qubit is $\ket0_L = \ket{00}$ (row 0), $\ket1_L = \ket{11}$ (row 3). \code{Z0 = psi0[:, 2N-2:2N+2]} is
+the initial zero-mode subspace.
+
+\subsubsection*{Sparse $H(t)$ and the Gauss--Legendre step}
+
+\begin{function}{exchange\_sparse(f, J), ham\_sp(f)}
+Sparse (CSC) versions: \code{exchange\_sparse} is a \code{block\_diag} of the $4\times4$ exchange blocks; \code{ham\_sp(f) = H\_noJ\_sp + exchange\_sparse(f)}.
+\end{function}
+
+\begin{function}{step(psi, t, dt, ft)}
+\begin{Verbatim}
+def step(psi, t, dt, ft):
+    M0 = -1j * ham_sp(ft(t + c1*dt))
+    M1 = -1j * ham_sp(ft(t + c2*dt))
+    A = sp.bmat([[I_sp - 0.25*dt*M0, -a12*dt*M0],
+                 [-a21*dt*M1, I_sp - 0.25*dt*M1]], format="csc")
+    B = np.vstack([M0 @ psi, M1 @ psi])
+    lu = splu(A, permc_spec="MMD_AT_PLUS_A")
+    ...
+    return psi + 0.5*dt*(K[0] + K[1])
+\end{Verbatim}
+One step of the 2-stage Gauss--Legendre implicit Runge--Kutta method (4th order) for $\dot\psi = M(t)\psi$, $M = -iH(t)$, applied to all
+$4N$ columns at once. With nodes $c_{1,2} = \tfrac12\mp\tfrac{\sqrt3}{6}$ and Butcher coefficients $a_{11} = a_{22} = \tfrac14$,
+$a_{12} = \tfrac14-\tfrac{\sqrt3}{6}$, $a_{21} = \tfrac14+\tfrac{\sqrt3}{6}$, $b_1 = b_2 = \tfrac12$, and $M_i = M(t + c_i\,dt)$ ($H$ at the two Gauss
+points), the stages solve the linear system
+\[
+\begin{pmatrix} 1 - a_{11}\,dt\,M_0 & -a_{12}\,dt\,M_0\\ -a_{21}\,dt\,M_1 & 1 - a_{22}\,dt\,M_1\end{pmatrix}
+\begin{pmatrix}K_0\\K_1\end{pmatrix} = \begin{pmatrix}M_0\psi\\ M_1\psi\end{pmatrix},
+\qquad \psi(t+dt) = \psi + \tfrac{dt}{2}(K_0 + K_1).
+\]
+The $2D\times2D$ sparse matrix is factorized once per step by \code{splu} (permutation \code{MMD\_AT\_PLUS\_A}), and the $D$ right-hand sides are
+solved in \code{n\_threads} chunks on a thread pool; \code{n\_threads = 1}, so the timings of section 11 are single-thread (the comment notes
+that more threads are faster). This is the sparse-LU form of the period-finding notebook. Time step \code{DT = 0.25}.
+\end{function}
+
+\subsubsection*{Readout}
+
+\code{hz} indexes the horizontal chain ($y = 0$) sorted by $x$; \code{tauz} $= (1,1,-1,-1)$ repeated over sites.
+
+\begin{function}{electron\_density(W)}
+\begin{Verbatim}
+    """Electron number per site of the state with occupied columns W: electron part of diag(G), G = W W†."""
+    return (np.abs(W) ** 2).sum(axis=1).reshape(N, 4)[:, :2].sum(axis=1)
+\end{Verbatim}
+$n(\mathbf r) = \sum_{\sigma}G_{\mathbf r\sigma,\mathbf r\sigma}$ with $G = WW^\dagger$ restricted to the electron components $(u_\uparrow, u_\downarrow)$.
+\end{function}
+
+\begin{function}{readout(psi)}
+For the current full basis \code{psi} returns a dict with
+\code{dn\_h}: $\delta n = n(\text{\code{psi}}[:, \text{\code{masks[3]}}]) - n(\text{\code{psi}}[:, \text{\code{masks[0]}}])$ on the horizontal chain;
+\code{dQ}: $\sum_{\mathbf r}\delta n$ over all sites; \code{dQ\_modes}: $\langle\psi_k|\tau_z|\psi_k\rangle$ for columns $2N$, $2N+1$;
+\code{z}: the $4\times2$ overlaps $Z_0^\dagger\psi_{A,B}$ with the initial zero-mode subspace. Because the two masks differ only in
+columns $2N-2\dots2N+1$, \code{dQ} equals the sum of \code{dQ\_modes} (Overview, Logical qubit and readout); the bulk columns cancel exactly.
+\end{function}
+
+\begin{function}{evolve(ft, psi, t0, t1, dt\_snap, dt=DT)}
+Evolves the full basis from $t_0$ to $t_1$ with \code{step}, renormalizing every column after each step, and calls \code{readout} at $t_0$, every
+\code{dt\_snap} and at the last step. Returns \code{psi, ts, R} (list of readout dicts).
+\end{function}
+
+\begin{function}{mode\_leak(R, name)}
+Leakage at the last snapshot: $\ell_k = 1 - \|z_{:,k}\|^2$ from \code{R[-1]["z"]}; prints and returns it. Since \code{Z0} is an orthonormal basis of
+the same subspace as the four $\gamma_i(0)$, this equals Julia's \code{mode\_leak(z)}. Values of order $-10^{-15}$ are rounding.
+\end{function}
+
+\begin{function}{dQ\_adiabatic(H)}
+Diagonalizes $H$ and sums $\langle\phi|\tau_z|\phi\rangle$ over the positive-energy states among the four lowest $|E|$, skipping states with
+$|E| < 10^{-11}$ (an exact zero mode contributes 0). Evaluated at every fusion snapshot to draw the adiabatic curve in the cell-19 plot.
+\end{function}
+
+\paragraph{End of the fusion.} \code{q = Fusion()}, \code{Tf = 380}; \code{HT\_end = ham(f\_fuse(q, Tf))}; \code{Z4\_end} are the four eigenvectors of
+smallest $|E|$. \code{TIMES} collects wall times.
+
+\begin{function}{run(ft, T1, label, dt\_gate=5.0, dt\_fuse=1.0)}
+One full run starting from \code{psi0}: if \code{T1 > 0}, two \code{evolve} calls of duration $T_1$ (snapshots every 5) with \code{mode\_leak}
+after each (\code{leak\_one}, \code{leak}); then the fusion from $T_g = 2T_1$ to $T_g + T_f$ (snapshots every 1). Fusion leakage
+$1 - \|Z_{4,\rm end}^\dagger\psi_k\|^2$ (the counterpart of Julia's \code{fusion\_leak}). Returns \code{out} with \code{Tg}, the leakages,
+\code{out["fusion"]} (final \code{dQ}, \code{dQ\_modes}, \code{leak}, \code{ts}, \code{dQ\_t}, \code{dQad\_t}) and \code{out["snap"]} = (times,
+$\delta n$ on the horizontal chain, $\Delta Q$) at all snapshots. Records the gate and fusion wall times in \code{TIMES}.
+\end{function}
+
+%----------------------------------------------------------------------
+\subsection{Sections 7--8: Z and X gates, then the partial fusion}
+
+The texture functions are \code{fz} (two \code{exchange\_12}, then \code{f\_fuse}), \code{ff} (fusion only) and \code{fx} (two
+\code{exchange\_23} with \code{rot\_T = 400}, then fusion). A check prints $\|H(2T_{12}) - H(0)\| = 0$ with $T_{12} = 2040$: the texture returns
+to the initial one after the gate. Results:
+
+\begin{center}
+\footnotesize\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lll}
+\toprule
+Run & Leakage $(\psi_A, \psi_B)$ & Fusion: $\Delta Q$ ($\psi_A$, $\psi_B$); leakage\\
+\midrule
+Z, one exchange & $(9.74\times10^{-7}, 0)$ & \\
+Z, two exchanges & $(1.997\times10^{-6}, 0)$ & $-0.477717$ ($-0.477717$, $3.8\times10^{-8}$); $(3.6963\times10^{-5}, 0)$\\
+F (no gate) & & $-0.477373$ ($-0.477373$, $3.8\times10^{-8}$); $(3.7778\times10^{-5}, 0)$\\
+X, one exchange & $(3.4886\times10^{-5}, 1.24\times10^{-7})$ & \\
+X, two exchanges & $(3.4163, 3.4869)\times10^{-5}$ & $+0.477004$ ($+0.476113$, $8.9\times10^{-4}$); $(8.075, 3.331)\times10^{-5}$\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{py_dQ.png}
+\caption{Python, cell 19: $\Delta Q$ during the fusion. Left: after Z and with no gate, against the adiabatic value
+(\code{dQ\_adiabatic}, dotted). Right: after X, against minus the adiabatic value.}
+\end{figure}
+
+%----------------------------------------------------------------------
+\subsection{Section 9: charge density \texorpdfstring{$\delta n(x,t)$}{δn(x,t)}}
+
+\begin{function}{density\_figure(ts, x, D, Tg, gate, method, out)}
+The matplotlib counterpart of the Julia \code{density\_figure}: $\log_{10}|\delta n|$ over the full protocol (range $[-12, 0]$, dashed at
+$T_g/2$ and $T_g$) and $\delta n$ during the fusion on a symmetric scale; dotted lines at the junctions. Saved to \code{out}.
+\end{function}
+
+The snapshot data of the Z and X runs are saved to \code{gate\_density\_kwant\_\{Z,X400\}.npz} (\code{ts, x, D, Tg, dQ}; \code{dQ} summed over
+all sites). Z: $T_g = 4080$, 1197 snapshots, $\Delta Q(T) = -0.477717$; X: $T_g = 7760$, 1933 snapshots, $\Delta Q(T) = +0.477004$.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{py_density_X.png}
+\caption{Python, X run (\code{density\_figure}). Left: $\log_{10}|\delta n(x,t)|$ over two \code{exchange\_23} ($T_1 = 3880$) and the fusion.
+Right: $\delta n$ during the fusion, with the opposite sign to the Z run ($\sum_{\rm chain}\delta n = +0.444$).}
+\end{figure}
+
+%----------------------------------------------------------------------
+\subsection{Section 10: saving the results}
+
+Top-level code: \code{iA} is the $+E_A$ state among the four lowest $|E|$ of \code{HT\_end}; the dict \code{gates} holds the same 12 keys as
+\code{msh\_tjunctions\_tn\_gates.csv}, with \code{fus\_dQad\_A} $=\langle\phi_{iA}|\tau_z|\phi_{iA}\rangle = -0.476854$ and
+\code{fus\_E\_A} $= 0.0438539$. Saved to \code{gates\_kwant.npz}.
+
+%----------------------------------------------------------------------
+\subsection{Section 11: cost of the dense route}
+
+Measured times (one thread, $dt = 0.25$): Z gate 570.6~s (16\,320 steps, 34.96~ms/step), Z fusion 54.4~s (1520 steps), F fusion 54.0~s,
+X gate 1110.0~s (31\,040 steps, 35.76~ms/step), X fusion 54.1~s; one \code{eigh} of $H$ ($D = 576$) 0.078~s.
+
+\begin{function}{ham\_nleg(nleg, f=f0)}
+Builds the same array with arms of \code{nleg} sites (junctions at $(c-2)\cdot2\,$\code{nleg}) as a kwant system and returns its sparse BdG
+matrix and the number of sites. Self-contained copy of the label, texture and kwant builder for arbitrary leg length.
+\end{function}
+
+\begin{function}{bench\_step(H, dt=DT, nst=3)}
+Average time of one full-basis Gauss--Legendre step with a static $H$, as in \code{step}: builds $M_0, M_1$ (as \code{(H + 0*H).tocsc()}, so
+a sum of the static $H$ with itself, not the rebuild of $H(t)$ by \code{ham\_sp}), the block matrix, the sparse LU and the solve for
+$D$ right-hand sides (\code{psi = I}).
+\end{function}
+
+\begin{center}
+\begin{tabular}{rrrrr}
+\toprule
+Arm & sites & $D$ & full-basis step & \code{eigh}\\
+\midrule
+16 & 144 & 576 & 24.6 ms & 0.078 s\\
+32 & 288 & 1152 & 157.6 ms & 0.544 s\\
+64 & 576 & 2304 & 1095.3 ms & 5.649 s\\
+\bottomrule
+\end{tabular}
+\end{center}
+Everything is saved to \code{timing\_kwant.npz} (\code{time\_*}, \code{steps\_*}, \code{dt}, \code{eigh}, \code{bench\_*}). The benchmark step at
+144 sites (24.6~ms) is faster than the measured step in the runs (about 35~ms). The markdown now explains why: a step of \code{evolve} also
+rebuilds the sparse $H(t)$ at both Gauss points (\code{ham\_sp}), goes through the thread-pool solve (which copies $B$ into contiguous chunks
+and stacks the result, even with one thread) and normalizes $\psi$, plus a readout every few steps. Timed one at a time on the same machine
+(under some load, so all times were longer), they cost about 5, 7 and 1~ms per step, which accounts for the gap. The benchmark measures how
+the step arithmetic scales with $D$; the extra work is overhead of this implementation, not of the method.

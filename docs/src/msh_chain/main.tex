@@ -1,0 +1,1161 @@
+\documentclass[11pt]{article}
+\input{../preamble.tex}
+\graphicspath{{figs/}}
+\hypersetup{pdftitle={MSH chain notebooks: function reference}}
+\newcommand{\nb}[1]{\texttt{#1}}
+% allow line breaks after underscores and commas inside code names
+\newcommand{\codeus}{\textunderscore\allowbreak}
+\renewcommand{\code}[1]{{\ttfamily\let\_\codeus #1}}
+\sloppy
+
+\begin{document}
+
+%======================================================================
+\begin{titlepage}
+\centering
+\vspace*{3cm}
+{\Huge\bfseries MSH chain notebooks\par}
+\vspace{0.6cm}
+{\LARGE Function reference\par}
+\vspace{1.5cm}
+{\large Magnet–superconductor-hybrid chain: tensor networks (TensorBinding.jl) and dense exact diagonalization\par}
+\vspace{1.5cm}
+\begin{tabular}{ll}
+\toprule
+Notebook & Content\\
+\midrule
+\nb{msh\_chain\_tn.ipynb} & Julia, TensorBinding.jl / ITensors: MPO, KPM, DMRG, TDVP\\
+\nb{msh\_chain\_python\_ed.ipynb} & Python / NumPy: dense BdG exact diagonalization\\
+\nb{msh\_chain\_compare.ipynb} & Python: row-by-row comparison of the two result files\\
+\bottomrule
+\end{tabular}
+\vspace{1.5cm}
+
+Repository: \nb{MSH\_Tensor\_Network\_Methods}\par
+\vfill
+{\large 2026-10-29\par}
+\end{titlepage}
+
+\tableofcontents
+\clearpage
+
+%======================================================================
+\section{Overview}
+
+This document describes every function and struct defined in the three MSH-chain notebooks: what each computes, the method, its inputs and outputs, the numerical settings that matter, and where it is used. All statements are taken from the notebook code, markdown and printed outputs. Numbers quoted from outputs are for the 64-site chain ($L=6$) that all three notebooks use. Energies and times are in units of the hopping $t$ (with $\hbar=1$).
+
+\subsection{The model}
+
+A single chain of $N$ sites (open boundaries) with a classical spin texture $\mathbf S_n$ on an s-wave superconductor. The particle block is
+\[
+H_0=\sum_n c_n^\dagger\bigl(-\mu+J\,\mathbf S_n\cdot\boldsymbol\sigma\bigr)c_n
++\sum_n\Bigl[c_{n+1}^\dagger\bigl(-t+i\alpha\,\sigma_y\bigr)c_n+\text{h.c.}\Bigr],
+\]
+with on-site singlet pairing $\Delta\,(c_\uparrow^\dagger c_\downarrow^\dagger-c_\downarrow^\dagger c_\uparrow^\dagger)$. Here $c_n=(c_{n\uparrow},c_{n\downarrow})^T$, $\mu$ is the chemical potential, $J$ the exchange coupling, $\alpha$ the Rashba coupling and $\boldsymbol\sigma$ the Pauli matrices in spin space. The TN notebook calls this ``the 1D slice of the kwant CZ model (\code{chain} onsite + \code{hop\_x} hopping)''.
+
+\begin{table}[H]
+\centering
+\caption{Model parameters (defaults in both codes; ``CZ-project values'').}
+\begin{tabular}{llll}
+\toprule
+Symbol & Julia keyword & Python key & Value\\
+\midrule
+$t$ & \code{t} & \code{t} & 1.0\\
+$\mu$ & \code{μ} & \code{mu} & $-7.0$ (fixed throughout)\\
+$\alpha$ & \code{α} & \code{alpha} & 0.9\\
+$\Delta$ & \code{Δ} & \code{Delta} & 2.4\\
+$J$ & \code{J} & \code{J} & 5.8\\
+$\varphi$ & \code{φ} & \code{phi} & $\pi/2$\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Spin texture.} The spins are
+\[
+\mathbf S_n=(\cos\varphi\sin\theta_n,\ \sin\varphi\sin\theta_n,\ \cos\theta_n),\qquad
+\theta_n=(-1)^n\,\tfrac{\pi}{2}\,f(n),
+\]
+with $n$ the 0-indexed site and $f(n)\in[0,1]$ the \emph{rotation fraction}. $f=0$ puts all spins along $+\hat z$ (ferromagnetic, out of plane), which is topological at $\mu=-7$ with Majorana end modes. $f=1$ gives alternating $\pm\hat y$ (antiferromagnetic, in plane), which is trivially gapped. The chemical potential is never changed; the phase is switched only by rotating the spins through $f$. For spins along $\hat z$ the TN notebook gives the 1D topological window $\Delta^2+(\mu+2t)^2<J^2<\Delta^2+(\mu-2t)^2$ (Rashba does not shift these bounds); with the defaults this reads $30.76<33.64<86.76$.
+
+\subsection{Nambu conventions of the two codes}
+
+\begin{table}[H]
+\centering
+\caption{Basis conventions. Only basis-independent quantities (spectra, spin-summed LDOS and densities, $\Delta Q$) are compared between the codes.}
+\small
+\begin{tabularx}{\linewidth}{lXX}
+\toprule
+ & Julia (\nb{msh\_chain\_tn}) & Python (\nb{msh\_chain\_python\_ed})\\
+\midrule
+Nambu spinor & $(c_\uparrow,c_\downarrow,c_\uparrow^\dagger,c_\downarrow^\dagger)$ & $(c_\uparrow,c_\downarrow,c_\downarrow^\dagger,-c_\uparrow^\dagger)$, i.e.\ $\psi^\dagger=(c^\dagger_\uparrow,c^\dagger_\downarrow,c_\downarrow,-c_\uparrow)$\\
+BdG form & $\begin{pmatrix}H_0&\Delta\,i\sigma_y\\(\Delta\,i\sigma_y)^\dagger&-H_0^*\end{pmatrix}$ & $-\mu\tau_z+\Delta\tau_x+J\,\mathbf S\cdot\boldsymbol\sigma$ on site, hopping $H_{i+1,i}=-t\tau_z-i\alpha\tau_z\sigma_y$\\
+Dense index & nambu-major: $(\text{nambu}-1)\,2N+(\text{spin}-1)\,N+n$, i.e.\ \code{kron(nambu, spin, position)} & site-major: \code{4*x + c}, \code{c} = 0…3 (``\code{ltslts}'', ``\code{udd-u}'')\\
+Particle–hole & $C=\tau_x K$: $\tau_x H^*\tau_x=-H$ & $C=\tau_y\sigma_y K$: $H=-\tau_y\sigma_y H^*\tau_y\sigma_y$\\
+Rashba sign & as in $H_0$ above & opposite ($-t-i\alpha\sigma_y$ on $H_{i+1,i}$); the ramp is also run with $\alpha=-0.9$ to reproduce the Julia model\\
+MPO sites & \code{[nambu; spin; pos₁ … pos\_L]}, $N=2^L$, \code{pos₁} = most significant bit & —\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The Rashba sign does not change static quantities (spectrum, LDOS, Majoranas, $\Delta Q(\ell)$), but it changes the dynamics of the spin ramp (Section~\ref{sec:py-ramp}).
+
+\subsection{Workflow and data files}
+
+\begin{enumerate}
+\item Run \nb{msh\_chain\_tn.ipynb}. Sections 7a, 9a and 10a load cached results from \nb{msh\_chain\_ldos\_kpm\_ramp.jls}, \nb{msh\_chain\_charge.jls} and \nb{msh\_chain\_ramp.jls} unless the flags \code{RUN\_FULL\_KPM}, \code{RUN\_CHARGE}, \code{RUN\_RAMP} are set to \code{true}. First runs take about 30, 10 and 4 minutes; sections 1–8 take a few minutes. The last cell writes 43 arrays to \nb{msh\_chain\_tn\_results.npz}.
+\item Run \nb{msh\_chain\_python\_ed.ipynb} (about 4 minutes). It writes \nb{msh\_compare\_python.npz} (42 arrays). The sliders of section 7b need a live kernel.
+\item Run \nb{msh\_chain\_compare.ipynb} (seconds). It loads both \nb{.npz} files and prints one line per comparison.
+\end{enumerate}
+The \nb{.jls} caches are tied to the function and struct definitions of the TN notebook. After changing \code{SpinRamp} or the diagnostics, the matching \code{RUN\_*} flag must be set once to regenerate them.
+
+\subsection{Mapping between the implementations}
+\label{sec:mapping}
+
+\begin{table}[H]
+\centering
+\caption{Where the two notebooks compute the same quantity, and the comparison row that checks it.}
+\small
+\begin{tabularx}{\linewidth}{>{\raggedright}p{2.6cm}>{\raggedright}X>{\raggedright}X>{\raggedright\arraybackslash}p{3.6cm}}
+\toprule
+Quantity & TN notebook (Julia) & Python notebook & Compare row(s)\\
+\midrule
+Spin texture & \code{spin\_texture} & \code{spin\_texture} & (all)\\
+BdG Hamiltonian & \code{msh\_chain} (MPO), \code{reference} (dense) & \code{calc\_msh\_ham}, \code{msh\_ham}; \code{reference\_julia} (port of \code{reference}) & (all; checked in-notebook)\\
+$|E|_1,|E|_3$ vs $f$ & §5 sweep with \code{dense} & §2 sweep & f sweep\\
+Lorentzian LDOS & \code{ldos} & \code{particle\_hole\_weights}, \code{lorentz\_ldos} & Lorentzian LDOS ×4\\
+Ramp snapshots & \code{SpinRamp}, \code{f\_nt}, \code{duration}, \code{wall\_L}, \code{ldos\_snapshots} & \code{ramp\_f}, \code{ramp\_duration}, \code{ramp\_wall}, \code{cases\_for} & (inputs)\\
+KPM LDOS & \code{msh\_tb} + \code{get\_ldos\_spatial}; \code{kpm\_exact} & \code{kpm\_scale}, \code{jackson}, \code{kpm\_weight\_matrix}, \code{kpm\_ldos} & kpm\_exact ×4; get\_ldos\_spatial ×4\\
+Majoranas, $\psi_f$ & \code{majorana\_fermion} (\code{zero\_mode\_subspace}, \code{refine\_subspace}, \code{fermion\_from\_subspace}), \code{uv\_profile} & \code{majorana\_fermion} (\code{individual\_MZMs}, \code{takagi}, \code{fix\_unitary}, \code{PHconj}) & centers, profiles, $E_f$ (×2)\\
+$\Delta Q$, $\delta n$ of a mode & \code{ΔQ\_mode}, \code{δn\_mode} & \code{dQ\_mode}, \code{dn\_mode} & (used below)\\
+$\Delta Q(\ell)$ & \code{majorana\_pair\_charge} (MPS), \code{exact\_pair\_charge} (dense) & \code{pair\_charge}, \code{charge\_density} & exact ΔQ (×2), FH, $E_f(\ell)$, δn, MPS ΔQ\\
+Segment texture & \code{segment}, \code{f\_segment} & \code{segment}, \code{f\_segment} & (inputs)\\
+Spin ramp & \code{RampHamiltonian}, \code{run\_spin\_ramp} (TDVP), \code{run\_spin\_ramp\_exact}, \code{final\_branches}, \code{adiabatic\_reference} & \code{run\_spin\_ramp} (full BdG unitary, masks) & ramp rows (×7)\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+%======================================================================
+\clearpage
+\part{Tensor-network notebook \texorpdfstring{\nb{msh\_chain\_tn.ipynb}}{msh\_chain\_tn.ipynb}}
+
+The notebook loads \code{LinearAlgebra, ITensors, ITensorMPS, Printf, Plots} and \code{TensorBinding} (aliased \code{TB}). It collects the earlier scripts \nb{msh\_chain.jl}, \nb{msh\_chain\_ldos.jl}, \nb{msh\_chain\_majorana.jl}, \nb{msh\_chain\_charge.jl} and \nb{msh\_chain\_ramp.jl}. Every tensor-network result is checked against exact diagonalization or exact time evolution of the same model.
+
+\paragraph{Why the BdG is assembled by hand.} The notebook explains two problems with TensorBinding's high-level builders. \code{add\_superconductivity!} builds the hole block as $\tau_z\otimes H_0$, which is wrong whenever $H_0$ has imaginary parts (the $\sigma_y$ exchange component); the correct block is $-H_0^*$. \code{add\_soc!(:rashba)} uses periodic shift operators and so adds a bond between the chain ends. Both break the comparison with the kwant model, so \code{msh\_chain} uses TensorBinding's low-level pieces.
+
+%----------------------------------------------------------------------
+\section{Building blocks (TN §2)}
+
+\begin{function}{σ0, σx, σy, σz}
+Constant \code{ComplexF64} $2\times2$ Pauli matrices. They are passed explicitly as spin operators because TensorBinding's \code{:Sx/:Sy/:Sz} are $\sigma/2$, not $\sigma$.
+\end{function}
+
+\begin{function}{spin\_texture(f; φ=π/2)}
+\begin{Verbatim}
+spin_texture(f; φ=π/2) = n -> (θ = (-1)^n * (π/2) * f(n);
+                               (cos(φ)*sin(θ), sin(φ)*sin(θ), cos(θ)))
+\end{Verbatim}
+Returns a closure \code{n -> (Sx, Sy, Sz)} for the 0-indexed site \code{n}, implementing $\mathbf S_n$ above. \code{f} is any function of the site with values in $[0,1]$: uniform rotations (\code{n -> 0.3}), domains (\code{n -> 16 ≤ n < 48 ? 0.0 : 1.0}), or, for a time-dependent protocol, \code{n -> f(n, t)}. Used by \code{msh\_chain}, \code{reference} and \code{RampHamiltonian}.
+\end{function}
+
+\begin{function}{diag\_mpo\_exact(v, pos; cutoff=1e-14)}
+Builds the diagonal MPO $\mathrm{diag}(v)$ on the position qubits \code{pos} from a length-$2^L$ vector \code{v}.
+\begin{Verbatim}
+A = permutedims(reshape(ComplexF64.(v), ntuple(_ -> 2, L)), L:-1:1)
+ψ = MPS(A, pos; cutoff=cutoff)
+...
+δ = ITensor(ComplexF64, s, s', dag(s''))   # δ(s, s', s'') copies the amplitude onto the diagonal
+W[k] = ψ[k] * δ;  W[k] = replaceprime(W[k], 2 => 0; tags=tags(s))
+\end{Verbatim}
+\emph{Method.} The vector is reshaped into an $L$-index tensor; the axes are reversed so that \code{pos[1]} is the most significant bit (Julia arrays are column-major). \code{MPS(A, pos)} compresses it by an exact tensor-train SVD with truncation \code{cutoff}. Each MPS tensor $\psi^{[k]}_{s}$ is then contracted with a copy tensor $\delta_{s s' s''}$ ($=1$ only if all three indices are equal), giving MPO tensors $W^{[k]}_{s s'}=\psi^{[k]}_s\,\delta_{ss'}$.
+
+\emph{Why.} It is used for the site-dependent exchange field. TensorBinding's \code{add\_onsite!} / \code{get\_diagonal\_mpo} use quantics TCI, which ``can silently drop sites of narrow or step-like profiles (for example sharp domain walls) at $L\ge 8$''. The exact TT-SVD never does, at the cost of an $O(2^L)$ vector, which the notebook calls fine up to $L\approx20$. Used in \code{msh\_chain} and \code{RampHamiltonian}.
+\end{function}
+
+%----------------------------------------------------------------------
+\section{The Hamiltonian builder (TN §3)}
+
+\begin{function}{msh\_chain(L, f; t=1.0, μ=-7.0, α=0.9, Δ=2.4, J=5.8, φ=π/2, cutoff=1e-12)}
+\begin{Verbatim}
+"""
+    msh_chain(L, f; t, μ, α, Δ, J, φ) -> (H_BdG::MPO, sites)
+
+Sites are [nambu; spin; pos...].  `f(n)` (n = 0 … 2^L−1) is the rotation
+fraction of the CZ protocol: 0 = topological (S ∥ ẑ), 1 = trivial (AFM ∥ ±ŷ).
+"""
+\end{Verbatim}
+\emph{Inputs.} \code{L}: number of position qubits ($N=2^L$ sites). \code{f}: rotation profile. Keywords: model parameters (CZ-project defaults) and the MPO-addition \code{cutoff}. \emph{Output.} The BdG MPO \code{HB} and its site indices \code{[ns; ss; pos]}.
+
+\emph{Steps.}
+\begin{enumerate}
+\item \code{TB.get\_Hamiltonian("chain\_1d", -t; L=L)} gives the hopping $-t$; \code{TB.add\_onsite!(H, -μ)} adds the constant chemical potential.
+\item \code{TB.add\_spin!} adds the spin site (spin-degenerate so far).
+\item Rashba: $\alpha\,i\sigma_y\otimes(K_u-K_d)$ with open-boundary shift operators \code{TB.shift\_pair\_mpos(pos, 1; cyclic=false)}; $K_u$ is the forward shift $c^\dagger_{n+1}c_n$. Attached to the spin site with \code{TB.prepend\_spin(·, ss, :iSy)}.
+\item Exchange $J\,\mathbf S_n\cdot\boldsymbol\sigma$: for each component $k\in\{x,y,z\}$ the vector $v_n=J\,S_n^k$ becomes an exact diagonal MPO (\code{diag\_mpo\_exact}) attached with the full Pauli matrix. Components with $\max|v|\le10^{-14}$ are skipped.
+\item BdG assembly with the Nambu site:
+\[
+H_{\rm BdG}=P_p\otimes H_0+P_h\otimes(-H_0^*)+\tau_+\otimes\Delta\,i\sigma_y+\tau_-\otimes(\Delta\,i\sigma_y)^\dagger .
+\]
+On a plain MPO, \code{dag} is the elementwise complex conjugate, so \code{-1.0*dag(H0)} is $-H_0^*$; the pairing adjoint is \code{swapprime(dag(Hp), 0, 1)}.
+\end{enumerate}
+The MPO bond dimension stays small (5–8 for the textures used), so the construction scales to large $L$. Example output: \code{msh\_chain(6, n -> 0.0)} has 8 sites and maximal bond dimension 5. Used by \code{ldos}, \code{msh\_tb}, the Majorana and charge sections, and (with $J=0$) by \code{RampHamiltonian}.
+\end{function}
+
+%----------------------------------------------------------------------
+\section{Dense helpers and validation (TN §4–5)}
+
+These are for small systems only (dense dimension $4N$; practical up to $L\approx7$).
+
+\begin{function}{dense(mpo, sites)}
+Contracts the MPO into a $D\times D$ matrix, $D=\prod\dim(\text{sites})$, ordered \code{kron(nambu, spin, position)} (big-endian over \code{sites}):
+\begin{Verbatim}
+T = ITensors.@disable_warn_order prod(mpo)
+return reshape(Array(T, reverse(prime.(sites))..., reverse(sites)...), D, D)
+\end{Verbatim}
+The index order is reversed because Julia arrays are column-major. The notebook notes it is much faster than \code{TB.get\_matrix}, which applies the MPO to every basis state.
+\end{function}
+
+\begin{function}{reference(L, f; t=1.0, μ=-7.0, α=0.9, Δ=2.4, J=5.8, φ=π/2)}
+Builds the same BdG matrix directly from the model definition, without MPOs, as an independent check. With $T_{n+1,n}=1$ (open BC),
+\[
+H_0=\sigma_0\otimes(-\mu\,\mathbb 1_N)+\sum_n J\,(\mathbf S_n\cdot\boldsymbol\sigma)\otimes P_n+\bigl[(-t\sigma_0+i\alpha\sigma_y)\otimes T+\text{h.c.}\bigr],\quad
+H=\begin{pmatrix}H_0 & D\\ D^\dagger & -H_0^*\end{pmatrix},\ D=\Delta\,i\sigma_y\otimes\mathbb 1_N .
+\]
+Used by the validation cell, \code{exact\_pair\_charge} and \code{dense\_H}. The Python notebook ports it as \code{reference\_julia}.
+\end{function}
+
+\paragraph{Validation cell (§4).} For three textures on $L=6$, the cell compares \code{dense(msh\_chain(...))} with \code{reference}, checks particle–hole symmetry $CH^*C=-H$ with $C=\tau_x$ (\code{kron(σx, kron(σ0, I(N)))}), and prints the two smallest $|E|$:
+
+\begin{table}[H]
+\centering\small
+\begin{tabular}{lccccc}
+\toprule
+Texture & $\|H-H_{\rm ref}\|$ & PH error & $\chi$ & $|E|_1$ & $|E|_3$\\
+\midrule
+all $f=0$ (FM $\hat z$) & 3.3e-12 & 0 & 5 & 1.31e-14 & 0.255\\
+all $f=1$ (AFM $\pm\hat y$) & 1.9e-12 & 0 & 6 & 1.38 & 1.378\\
+$f=0$ on middle half, 1 outside & 1.4e-12 & 0 & 8 & 3.32e-08 & 0.259\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Rotation sweep (§5).} Every spin is rotated by the same $f=0,0.1,\dots,1$ and the dense spectrum of the MPO gives $|E|_1$ (the Majorana pair when it exists) and $|E|_3$ (the bulk gap edge). The zero mode survives up to $f\approx0.3$ ($|E|_1=2.2\times10^{-4}$), the gap nearly closes at $f\approx0.35$, and the chain is trivially gapped beyond ($|E|_1=1.378$ at $f=1$). The sweep is saved as \code{sweep\_f}, \code{sweep\_E13}; Python §2 reproduces it.
+
+%----------------------------------------------------------------------
+\section{LDOS and the spin-ramp definitions (TN §6)}
+
+\begin{function}{ldos(L, f; η=0.03, ω=range(-3, 3; length=601), model...)}
+Exact LDOS from the eigenpairs $(E_k,\psi_k)$ of the densified MPO, $\psi_k=(u_k,v_k)$:
+\[
+A_p(n,\omega)=\sum_k\sum_\sigma|u_k(n,\sigma)|^2\,\delta_\eta(\omega-E_k),\qquad
+A_h(n,\omega)=\sum_k\sum_\sigma|v_k(n,\sigma)|^2\,\delta_\eta(\omega-E_k),
+\]
+with Lorentzian $\delta_\eta(x)=(\eta/\pi)/(x^2+\eta^2)$, summed over spin.
+\begin{Verbatim}
+E, U = eigen(Hermitian(dense(HB, sites)))
+wp = abs2.(U[1:N, :])      .+ abs2.(U[N+1:2N, :])    # N × 4N, particle ↑+↓
+wh = abs2.(U[2N+1:3N, :])  .+ abs2.(U[3N+1:4N, :])   # N × 4N, hole ↑+↓
+lor = (η/π) ./ ((ω .- E') .^ 2 .+ η^2)               # Nω × 4N
+return lor * wp', lor * wh'                          # Nω × N each
+\end{Verbatim}
+Returns \code{(A\_p, A\_h)}, each \code{length(ω) × N}. Extra keywords go to \code{msh\_chain} (e.g.\ \code{ldos(6, n -> 0.0; J=5.0)}). Particle–hole symmetry gives $A_h(n,\omega)=A_p(n,-\omega)$; the total LDOS is $A_p+A_h$.
+
+\emph{Asymmetry of $A_p$.} The particle LDOS is concentrated at $\omega>0$. With $J=5.8$ the lower exchange-split band spans $\xi\in[-0.8,3.2]$, so $\mu=-7$ sits only 0.8 above its bottom. Almost all normal-state states are empty, and empty states put their particle weight at positive energy.
+\end{function}
+
+\subsection{Spin ramp: \code{smoothstep}, \code{SpinRamp} and its methods}
+
+These are defined in §6 and reused in §10. They implement the CZ project's two-sided ramp:
+\begin{gather*}
+f_n(t)=\mathrm{smoothstep}\!\Bigl(\frac{t-t_0}{T_{\rm rot}}-\text{step}_T\,k_n\Bigr),\qquad k_n=\min(n,N-1-n),\\
+\mathrm{smoothstep}(\tau)=\begin{cases}0&\tau\le0\\\sin^2(\pi\tau/2)&0<\tau<1\\1&\tau\ge1\end{cases}
+\end{gather*}
+for the $(N-\ell_{\rm final})/2$ outermost sites on each side; the central $\ell_{\rm final}$ sites never rotate. Each site turns over a time $T_{\rm rot}$, consecutive sites start $\text{step}_T\,T_{\rm rot}$ apart, so the walls move at $1/(\text{step}_T\,T_{\rm rot})$ sites per unit time and are about $1/\text{step}_T$ sites wide.
+
+\begin{Verbatim}
+Base.@kwdef struct SpinRamp
+    N::Int
+    ℓ_final::Int = 4
+    rot_T::Float64 = 100.0      # CZ rot_Tx
+    step_T::Float64 = 0.1       # CZ step_Tx
+    t0::Float64 = 0.0
+end
+\end{Verbatim}
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{lX}
+\toprule
+Function & Definition\\
+\midrule
+\code{smoothstep(τ)} & $\sin^2(\pi\tau/2)$ clamped to 0 / 1 outside $[0,1]$ (CZ project).\\
+\code{n\_rot(p)} & \code{(N - ℓ\_final) ÷ 2}, sites rotated per side.\\
+\code{rot\_order(p, n)} & $k=\min(n,N-1-n)$ if $k<$ \code{n\_rot}, else \code{nothing} (site never rotates).\\
+\code{f\_nt(p, n, t)} & $f_n(t)$ above; 0 for non-rotating sites.\\
+\code{duration(p)} & $T=((n_{\rm rot}-1)\,\text{step}_T+1)\,T_{\rm rot}$, the time the last site finishes.\\
+\code{wall\_speed(p)} & $1/(\text{step}_T\,T_{\rm rot})$ sites per unit time.\\
+\code{wall\_L(p, t)} & Left wall centre, the site whose rotation is halfway (smoothstep $=\tfrac12$ at $\tau=\tfrac12$): $((t-t_0)/T_{\rm rot}-\tfrac12)/\text{step}_T$, clamped to $[-0.5,\,n_{\rm rot}-0.5]$. The right wall is $N-1-$\code{wall\_L}.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+For $N=64$: with $\ell_{\rm final}=4$, $n_{\rm rot}=30$ and $T=390$; with $\ell_{\rm final}=0$, $n_{\rm rot}=32$ and $T=410$. The wall speed is 0.10 sites per unit time.
+
+\paragraph{\code{ldos\_ramp}, \code{ldos\_snapshots}.} \code{ldos\_ramp = SpinRamp(N=64, ℓ\_final=0)} rotates every site, so the chain goes from fully topological ($t=0$) to fully trivial ($t=T=410$). \code{ldos\_snapshots} is a list of four (label, $f$) pairs at $t=0,\,T/3,\,2T/3,\,T$; the inner helper \code{walls(t)} formats the wall positions. The printed labels are: $t=0$ fully topological; $t=137$, walls at $n\approx9,54$; $t=273$, walls at $n\approx22,41$; $t=410$ fully trivial. Used in §6, §7a and the save cell.
+
+\paragraph{LDOS plot cell.} For each snapshot the cell calls \code{ldos}, prints $\max|A_h(\omega)-A_p(-\omega)|$ (6.4e-13, 2.2e-12, 2.0e-12, 1.8e-12), and plots three rows: particle LDOS, particle + hole LDOS, and the $\omega=0$ cut. The local helper \code{cmax(A)} sets the colour scale to the 99.5th percentile. The figure is saved as \nb{msh\_chain\_ldos.png} (Fig.~\ref{fig:tn-ldos}).
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\linewidth]{tn_ldos.png}
+\caption{TN §6: spin-summed Lorentzian LDOS ($\eta=0.03$) at four snapshots of the spin ramp with $\ell_{\rm final}=0$. Row 1: particle; row 2: particle + hole; row 3: $\omega=0$ cut. At $t=0$ zero-energy peaks sit at both chain ends and the bulk gap is $\approx0.26$; at $T/3$ and $2T/3$ the Majoranas sit at the moving domain walls; at $t=T$ the chain is fully gapped with the band edge near 1.4.}
+\label{fig:tn-ldos}
+\end{figure}
+
+%----------------------------------------------------------------------
+\section{LDOS with TensorBinding's KPM routine (TN §7)}
+
+Dense diagonalization stops being feasible beyond $N\approx128$. TensorBinding's \code{get\_ldos\_spatial} uses the kernel polynomial method: it expands $\delta(\omega-H)$ in Chebyshev polynomials $T_n(\tilde H)$ of $\tilde H=(H-\text{center})/\text{scale}$, evaluated on the MPO, damped with a Jackson kernel. No dense matrix is built.
+
+\begin{function}{msh\_tb(L, f; scale=nothing, t, μ, α, Δ, J, model...)}
+\begin{Verbatim}
+"""
+    msh_tb(L, f; scale=nothing, model...) -> TBHamiltonian
+
+Wrap the `msh_chain` BdG MPO as a TBHamiltonian for TensorBinding's KPM routines.
+`scale` is the KPM half-bandwidth; by default a safe analytic bound on ‖H_BdG‖.
+"""
+\end{Verbatim}
+\code{get\_ldos\_spatial} takes a \code{TBHamiltonian}, not a bare MPO. \code{msh\_tb} builds the chain with \code{msh\_chain} and wraps it with \code{spin\_s}, \code{nambu\_s}, \code{aux\_side = :pre}, \code{center = 0} and \code{geometry = i -> Float64[i]}. The package's sector projections expect the site order \code{[nambu; spin; pos...]}, which \code{msh\_chain} produces. The default scale is $1.05\times$ the bound
+\[
+\|H_{\rm BdG}\|\le|\mu|+|J|+2\sqrt{t^2+\alpha^2}+|\Delta|,
+\]
+so the package does not run its DMRG-based estimate. With the defaults, scale $=18.785$ (printed by the Python notebook).
+\end{function}
+
+\paragraph{Using \code{get\_ldos\_spatial}.} \code{nambu\_proj=true, proj\_nambu=1} selects the particle sector (\code{2} the hole sector); \code{spin\_proj=true} sums over spin (\code{proj\_s=1} or \code{2} for one spin). The raw output is per rescaled energy and carries an extra $1/\pi$: multiplying by \code{π / H.scale} gives the physical LDOS, which integrates to 2 states per site ($\uparrow+\downarrow$) per Nambu sector, the normalization of §6.
+
+\paragraph{Resolution and cost.} The Jackson kernel broadens every peak by about $\pi\,\text{scale}/N_{\rm cheb}$. The spectrum spans about $\pm16$ but the gap is only 0.26, so $N_{\rm cheb}\approx1000$ is needed.
+
+\begin{table}[H]
+\centering\small
+\caption{KPM cost on 64 sites (from the notebook markdown).}
+\begin{tabular}{llll}
+\toprule
+\code{Ncheb} & resolution & mode & time (64 sites)\\
+\midrule
+128 & $\approx0.46$ & \code{:mpo} (whole chain in one pass) & $\approx25$ s\\
+1024 & $\approx0.058$ & \code{:mpo} & $\approx$ 5–11 min (texture-dependent)\\
+1024 & $\approx0.058$ & \code{:mps} (one recursion per site and spin) & $\approx6$ s per site\\
+\bottomrule
+\end{tabular}
+\end{table}
+At $N=64$ this is slower than dense diagonalization; the advantage is scaling. \code{mode=:mps} with \code{x\_groups} computes only selected sites (chain ends, domain walls).
+
+\begin{function}{kpm\_exact(H::TB.TBHamiltonian, Ncheb, ω; kernel=:jackson, proj\_nambu=1)}
+Pushes the exact eigenpairs through the same Chebyshev formula as \code{get\_ldos\_spatial} (same kernel, $N_{\rm cheb}$ and normalization), so any difference from \code{get\_ldos\_spatial} is pure tensor-network arithmetic error, not broadening. With $\tilde E_k=(E_k-\text{center})/\text{scale}$, $\tilde\omega=(\omega-\text{center})/\text{scale}$ and $w_k(x)$ the spin-summed weight of eigenvector $k$ in the chosen Nambu sector:
+\[
+\mu_n(x)=\sum_k w_k(x)\,T_{n-1}(\tilde E_k),\qquad
+A(x,\omega)=\frac{\sum_n W_{n,\tilde\omega}\,\mu_n(x)}{\pi^2N_{\rm cheb}\sqrt{1-\tilde\omega^2}},
+\]
+with $W$ = \code{TB.\_kpm\_weight\_matrix(Ncheb, ω̃; kernel)} and $A=0$ for $|\tilde\omega|\ge1$. $T_n$ is evaluated as $\cos(n\arccos\tilde E)$ with $\tilde E$ clamped to $[-1,1]$. Returns the raw (package-unit) LDOS, $N_\omega\times N$; multiply by $\pi/\text{scale}$ for physical units. The Python port of $W$ (Section~\ref{sec:py-kpm}) shows its content: $W_{n,\tilde\omega}=c_n\,g_n\,T_n(\tilde\omega)$, $c_0=1$, $c_{n>0}=2$, $g_n$ the unnormalized Jackson factors.
+\end{function}
+
+\paragraph{§7a cell.} With \code{RUN\_FULL\_KPM = false} it loads \nb{msh\_chain\_ldos\_kpm\_ramp.jls}; otherwise, for each of the four \code{ldos\_snapshots} on $L=6$, it computes on 241 points in $[-3,3]$:
+\begin{Verbatim}
+A_tb = TB.get_ldos_spatial(H, Ncheb, ω; nambu_proj=true, spin_proj=true,
+                           maxdim=512, cutoff=1e-12) .* (π / H.scale)
+A_ex = (kpm_exact(H, Ncheb, ω; proj_nambu=1) .+ kpm_exact(H, Ncheb, ω; proj_nambu=2)) .* (π / H.scale)
+\end{Verbatim}
+with $N_{\rm cheb}=1024$; \code{proj\_nambu} is omitted in \code{get\_ldos\_spatial}, so both Nambu sectors are summed. Printed $\max|A_{\rm TB}-A_{\rm exact}|$: 5.3e-06, 3.8e-06, 3.6e-06, 3.4e-05. The Jackson broadening is roughly Gaussian with width $\approx0.058$, while §6 uses a Lorentzian with $\eta=0.03$, so peak positions agree with §6 but peak heights do not (Fig.~\ref{fig:tn-kpm}).
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{tn_kpm.png}
+\caption{TN §7a: particle + hole LDOS from \code{get\_ldos\_spatial}, $N_{\rm cheb}=1024$ (row 1), and the $\omega=0$ cut against \code{kpm\_exact} (row 2). In the trivial snapshot the $\omega=0$ value is $\sim2\times10^{-5}$ and the MPS arithmetic error is visible.}
+\label{fig:tn-kpm}
+\end{figure}
+
+%----------------------------------------------------------------------
+\section{Majorana zero modes and the fermion mode (TN §8)}
+
+Following \nb{kitaev\_tensor\_network\_V2.ipynb}, four steps turn the Majorana pair into one ordinary fermion using only MPS/MPO operations:
+\begin{enumerate}
+\item \textbf{Zero-mode subspace.} Penalized DMRG on the folded operator $K=H^2+\eta^2$ finds the two states closest to $E=0$. A third penalized state is a gap check and should land at the bulk gap.
+\item \textbf{Localize.} Diagonalize the position operator $\hat X$ inside the two-state subspace. Its eigenvectors are the left and right Majoranas $\gamma_1,\gamma_2$.
+\item \textbf{Self-conjugacy.} With $C=\tau_xK$ ($K$ = complex conjugation), each $\hat X$ eigenvector satisfies $C\gamma=e^{i\theta}\gamma$; multiplying by $e^{i\theta/2}$ makes $C\gamma=\gamma$.
+\item \textbf{Pair.} $\psi_f=(\gamma_1+i\gamma_2)/\sqrt2$, choosing the member with $E_f\ge0$; its partner is $\bar\psi_f=C\psi_f$.
+\end{enumerate}
+Differences from the spinless Kitaev notebook: the position qubits are \code{sites[3:end]}, and $C$ acts as $\tau_x$ on the Nambu site only (identity on spin).
+
+\paragraph{Numerical settings that matter} (each found by comparison with exact diagonalization):
+\begin{itemize}
+\item $K$'s spectrum spans about $10^{-4}$ to 230 ($\|H\|\approx15$ against a gap of 0.26). ITensor's default local Krylov dimension (3) stalls at $\|H\psi\|\approx0.2$; \code{eigsolve\_krylovdim = 20} converges in about a second.
+\item \code{TB.build\_K} needs \code{cutoff\_K} $\le10^{-14}$. The package default ($10^{-8}$) truncates part of the $\eta^2$ term.
+\item DMRG on $K$ leaves a bulk admixture of amplitude $\sim10^{-7}$–$10^{-6}$. This does not matter for energies or profiles but does matter for $\Delta Q$ when the pair splitting is tiny; \code{refine\_subspace} removes it (§9).
+\end{itemize}
+
+\subsection{Small helpers}
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{>{\raggedright}p{4.3cm}X}
+\toprule
+Function & What it does\\
+\midrule
+\code{quietly(f)} & Runs \code{f} with a logger that shows only errors. KrylovKit warns ``ignoring imaginary component'' at every DMRG/linsolve/TDVP step on these MPOs; the imaginary parts are round-off ($\sim10^{-9}$ of the weight).\\
+\code{norm\_Hψ(H, ψ)} & $\|H\psi\|$ computed exactly: \code{apply(H, ψ; alg="naive", truncate=false)}, then the norm of the orthogonality centre. Tiny values are a cancellation of $O(1)$ terms, so no truncation is allowed.\\
+\code{dense\_vec(ψ, sites)} & Contracts an MPS into a dense vector ordered like \code{dense()} (nambu ⊗ spin ⊗ position, big-endian). Small $L$ only; used by the optional exact checks.\\
+\code{apply\_site(op, ψ, j)} & Copy of \code{ψ} with the single-site operator \code{op} applied to site \code{j}.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{function}{uv\_profile(ψ, sites)}
+Returns the spin-summed particle weight $u(n)=\sum_\sigma|u_\sigma(n)|^2$ and hole weight $v(n)=\sum_\sigma|v_\sigma(n)|^2$ for each site of an MPS on \code{[nambu; spin; pos₁ … pos\_L]}, without forming the $4\cdot2^L$ vector. For site $n$ it fixes each position qubit to the bits of $n$ (\code{onehot}, \code{pos₁} most significant) and contracts with the Nambu and spin tensors:
+\begin{Verbatim}
+head = ψ[1] * ψ[2]
+for n in 0:2^L-1
+    T = head
+    for k in 1:L
+        T *= ψ[k+2] * onehot(pos[k] => ((n >> (L - k)) & 1) + 1)
+    end
+    A = Array(T, ns, ss)
+    u[n+1], v[n+1] = sum(abs2, A[1, :]), sum(abs2, A[2, :])
+end
+\end{Verbatim}
+Cost $\sim2^L\cdot L\cdot\chi^2$, so it works at any $L$. Used for the Majorana and $\psi_f$ profiles (§8a, save cell) and for $|\psi_f(x,t)|^2$ and $\delta n(x,t)$ in §10a.
+\end{function}
+
+\subsection{The pipeline}
+
+\begin{function}{zero\_mode\_subspace(HB, sites; nzero=2, η=1e-2, ...)}
+\begin{Verbatim}
+function zero_mode_subspace(HB, sites; nzero=2, η=1e-2, seed=1234,
+                            nsweeps=20, maxdim=[10, 20, 50, 100, 200], cutoff=1e-14, cutoff_K=1e-14,
+                            noise=[1e-6, 1e-7, 1e-8, 0.0], weight=10.0,
+                            eigsolve_krylovdim=20, eigsolve_maxiter=3)
+\end{Verbatim}
+Builds $K=H^2+\eta^2$ with \code{TB.build\_K(HB, sites, 0.0, η; cutoff\_K)} and runs \code{nzero + 1} DMRG calculations from random MPS (bond dimension 10, fixed \code{seed}). The first is plain DMRG on $K$; each later one is penalized DMRG \code{dmrg(K, ψs, ψ0; weight)}, which adds a penalty \code{weight} for overlap with the states already found. The last state is removed as the gap check. Returns \code{(ψs, E\_sub, E\_gap)}: the \code{nzero} normalized states, their $\|H\psi\|$, and $\|H\psi\|$ of the gap-check state (should sit at the bulk gap). The settings \code{eigsolve\_krylovdim = 20} and \code{cutoff\_K = 1e-14} are the ones discussed above.
+\end{function}
+
+\begin{function}{refine\_subspace(HB, ψs; σ=1e-3, nsweeps=6, cutoff=1e-20, maxdim=200)}
+One inverse-iteration step per state,
+\[
+\psi\leftarrow\frac{(H-\sigma)^{-1}\psi}{\|(H-\sigma)^{-1}\psi\|},
+\]
+solved with \code{ITensorMPS.linsolve(HB, ψ, ψ, -σ, 1.0; ...)}. It suppresses the bulk admixture left by DMRG on $K$ by $\sim\text{gap}/\sigma$ while keeping the pair ($|E|\ll\sigma$) in the subspace. The docstring states it should be used only when the pair splitting is far below $\sigma$, and that a second step does not help.
+\end{function}
+
+\begin{function}{fermion\_from\_subspace(HB, sites, ψs; cutoff=1e-14)}
+Steps 2–4. Returns a named tuple \code{(centers, γs, Hγ, C)} and, for two states, also \code{ψf, ψfbar, E\_f}.
+
+\emph{Localization.} The position operator is $\hat X=1+\sum_{k=1}^{L}2^{L-k}\,n_k$, with $n_k=|1\rangle\langle1|$ on position qubit $k$ (site $k+2$); it is diagonal with eigenvalue $x+1$ on site $x$. With the overlap matrix $S_{ab}=\langle\psi_a|\psi_b\rangle$ and $X_{ab}=\langle\psi_a|\hat X|\psi_b\rangle$ the generalized eigenproblem $Xc=\lambda Sc$ is solved; the eigenvalues are the Majorana centres $\langle x\rangle$ (1-indexed; callers subtract 1), and each eigenvector $c$ gives $\gamma=\sum_jc_j\psi_j$ (MPS sum with \code{cutoff}), normalized. \code{eigen} returns the eigenvalues in ascending order, so the $\gamma$'s are sorted by position.
+
+\emph{Self-conjugacy.} $\hat X$ is real and acts trivially on Nambu and spin, so it commutes with $C$, and each eigenvector obeys $C\gamma=e^{i\theta}\gamma$. The code implements \code{C(ψ)} as \code{dag(ψ)} (complex conjugation) followed by $\tau_x$ on site 1, and \code{fixphase(γ) = exp(im*angle(⟨γ|Cγ⟩)/2)*γ}.
+
+\emph{Couplings.} $H_{ij}=\langle\gamma_i|H|\gamma_j\rangle=iA_{ij}$ with $A$ real antisymmetric; the check is $\max|\mathrm{Re}\,H_{ij}|\approx0$.
+
+\emph{Pairing.} $\psi_f=(\gamma_1+i\gamma_2)/\|\cdot\|$, $E_f=\mathrm{Re}\langle\psi_f|H|\psi_f\rangle$; if $E_f<0$, $\psi_f\to C\psi_f$ and $E_f\to-E_f$. \code{ψfbar = C(ψf)}.
+\end{function}
+
+\begin{function}{majorana\_fermion(HB, sites; refine\_σ=nothing, cutoff=1e-14, kw...)}
+Full pipeline: \code{zero\_mode\_subspace} → optional \code{refine\_subspace} with $\sigma=$ \code{refine\_σ} (cutoff $\min(\text{cutoff},10^{-20})$) → \code{fermion\_from\_subspace}. Returns \code{ψs, E\_sub, E\_gap, centers, γs, Hγ, C} and, for two zero modes, \code{ψf, ψfbar, E\_f}. Used in §8a, the save cell and \code{run\_spin\_ramp}. Python equivalent: \code{majorana\_fermion(H)} (Section~\ref{sec:py-mzm}).
+\end{function}
+
+\subsection{§8a example: chain ends and domain walls}
+
+Two textures on 64 sites: all spins along $\hat z$, and a topological middle half ($16\le n<48$) inside a trivial background. Everything except the optional dense check (\code{check\_exact = L ≤ 8}) uses only MPS/MPO operations, so the cell runs unchanged for larger $L$. The dense check computes the weight of $\gamma_1,\gamma_2,\psi_f$ inside the exact zero-mode pair (via \code{dense\_vec}).
+
+\begin{table}[H]
+\centering\small
+\caption{Printed results of TN §8a.}
+\begin{tabular}{lcc}
+\toprule
+ & $f=0$ (ends) & domain (walls)\\
+\midrule
+zero-mode $\|H\psi\|$ (both states) & 5.62e-8 & 6.35e-7\\
+gap-check $\|H\psi\|$ & 0.255 & 0.259\\
+centres $\langle x\rangle$ (0-indexed) & 1.41, 61.59 & 16.55, 46.45\\
+$\|C\gamma_i-\gamma_i\|$ & 0, 5.7e-15 & 5.1e-10, 5.2e-10\\
+$\max|\langle\gamma_i|\gamma_j\rangle-\delta_{ij}|$ & 1.1e-15 & 1.6e-15\\
+$\max|\mathrm{Re}\,H_{ij}|$ & 2.0e-24 & 5.3e-17\\
+normalization $\sum|\gamma_1|^2,\sum|\gamma_2|^2,\sum(|u|^2+|v|^2)$ & 1, 1, 1 (12 digits) & 1, 1, 1\\
+$E_f=\langle\psi_f|H|\psi_f\rangle$ & 1.375e-14 & 3.319e-08\\
+$|\langle\psi_f|\bar\psi_f\rangle|$ & 2.4e-14 & 3.6e-12\\
+exact $E_f$ & 1.668e-14 & 3.319e-08\\
+weight in exact pair ($\gamma_1,\gamma_2,\psi_f$) & 1.000000000000 & 1.000000000000\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The $\|H\psi\|$ of the DMRG states (5.62e-8, 6.35e-7) is much larger than $E_f$; the notebook attributes this to the bulk admixture, which inflates $\|H\psi\|$ while $\langle\psi_f|H|\psi_f\rangle$ is only second order in it (§9).
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\linewidth]{tn_majorana.png}
+\caption{TN §8a: $|\gamma_i(n)|^2$ (particle + hole, $\uparrow+\downarrow$) on a log scale (left) and the particle and hole weights of $\psi_f$ (right), for $f=0$ (top) and the domain texture (bottom).}
+\label{fig:tn-mzm}
+\end{figure}
+
+%----------------------------------------------------------------------
+\section{Charge difference between the logical states (TN §9)}
+
+The logical states $|0\rangle$ (mode empty) and $|1\rangle$ (mode filled) are BCS states that share the filled bulk and differ only in which member of the zero-mode pair is occupied. Their BdG correlation matrices differ by exactly $|\psi_f\rangle\langle\psi_f|-|\bar\psi_f\rangle\langle\bar\psi_f|$, so no bulk projector is needed. With $\psi_f=(u,v)$:
+\[
+\delta n(x)=n_1(x)-n_0(x)=\sum_\sigma|u_\sigma(x)|^2-|v_\sigma(x)|^2,\qquad
+\Delta Q=\sum_x\delta n(x)=\langle\psi_f|\tau_z|\psi_f\rangle .
+\]
+$\delta n$ counts electrons (the charge density is $-e\,\delta n$). $|1\rangle$ is the $+E$ member, which fixes the sign of $\Delta Q$. $\Delta Q$ is not quantized; it comes from the overlap of the two Majoranas. Since $H$ contains $-\mu\hat N$, Feynman–Hellmann gives the independent check $\Delta Q=-\partial E_f/\partial\mu$.
+
+\emph{Geometry.} A centred segment of $\ell$ sites is topological ($f=0$), the rest trivial ($f=1$), at fixed $\mu=-7$. The Majoranas sit at the two domain walls, so shrinking $\ell$ pushes them together.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{>{\raggedright}p{4.6cm}X}
+\toprule
+Function & What it does\\
+\midrule
+\code{τz\_on(ψ)} & Copy of \code{ψ} with $\tau_z=\mathrm{diag}(1,-1)$ applied on the Nambu site (identity on spin).\\
+\code{ΔQ\_mode(ψ)} & $\mathrm{Re}\langle\psi|\tau_z|\psi\rangle$.\\
+\code{component\_mps(sites, nb, σ, x)} & Product MPS $|nb,\sigma,x\rangle$ (one-hot on every site; $x$ 0-indexed, \code{pos₁} most significant bit).\\
+\code{δn\_mode(ψ, sites)} & $\delta n(x)=\sum_\sigma|\langle p,\sigma,x|\psi\rangle|^2-|\langle h,\sigma,x|\psi\rangle|^2$ from overlaps with \code{component\_mps}; no dense vector, so it works at any size.\\
+\code{segment(N, ℓ)} & 0-indexed range \code{((N-ℓ)÷2):((N-ℓ)÷2+ℓ-1)} of the centred segment.\\
+\code{f\_segment(N, ℓ)} & \code{n -> n in segment(N, ℓ) ? 0.0 : 1.0}.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{function}{majorana\_pair\_charge(L, ℓ; refine\_σ=1e-3, refine\_below=refine\_σ/500, gap\_factor=2.0, cutoff=1e-20, with\_δn=false, model\_kw...)}
+\begin{Verbatim}
+Zero-mode pair (penalized DMRG on K) → gap check → [one inverse-iteration step if the pair
+splitting ⟨ψ_f|H|ψ_f⟩ < `refine_below`] → X̂ localization → Cγ = γ → ψ_f (+E member)
+→ ΔQ = ⟨ψ_f|τ_z|ψ_f⟩.  `ΔQ_raw` is the value without refinement.  If the third penalized state
+is not well above the pair, it warns and returns NaN.
+\end{Verbatim}
+\emph{Steps.} Build \code{msh\_chain(L, f\_segment(N, ℓ))}; \code{zero\_mode\_subspace} with \code{cutoff = cutoff\_K = 1e-20}; gap check $E_{\rm gap}>$ \code{gap\_factor} $\cdot\max E_{\rm sub}$ (else warning and \code{NaN}); \code{fermion\_from\_subspace} → \code{r0}; if $|E_f|<$ \code{refine\_below}, redo \code{fermion\_from\_subspace} on \code{refine\_subspace(ψs)}. Returns \code{(ΔQ, ΔQ\_raw, refined, E, E\_next, δn, centers)}; \code{δn} only if \code{with\_δn}.
+
+\emph{Why the refinement rule.} $\Delta Q$ is first order in any bulk admixture, because $\tau_z$ couples the zero mode to bulk states, while $E_f$ is only second order. DMRG alone gives errors of about $10^{-8}$, growing to $10^{-6}$ once $\Delta Q$ itself is tiny ($\ell\gtrsim30$). One inverse-iteration step ($\sigma=10^{-3}$) brings the error to $10^{-10}$–$10^{-13}$, but only when the pair splitting is far below $\sigma$. For $E\gtrsim\sigma/500$ the \code{linsolve} on $H-\sigma$ is poorly converged and adds error (up to $10^{-4}$), because $(H-\sigma)^{-1}$ weights the $\pm E$ members unequally, while DMRG alone is already accurate. The splitting is judged by $\langle\psi_f|H|\psi_f\rangle$ (second order in the admixture), not by $\|H\psi\|$ of the DMRG states, which the admixture inflates. With the defaults the threshold is $2\times10^{-6}$.
+\end{function}
+
+\begin{function}{exact\_pair\_charge(L, ℓ; dμ=1e-4, μ=-7.0, model\_kw...)}
+Dense reference from \code{reference}. The $+E$ state is the first positive eigenvalue (\code{findfirst(>(0), E)}), reshaped as \code{(x, spin, nambu)}; $\delta n(x)$ and $\Delta Q=\sum_x\delta n$ follow from the formula above. The Feynman–Hellmann value is the central difference
+\[
+\Delta Q_{\rm FH}=-\frac{E_+(\mu+d\mu)-E_+(\mu-d\mu)}{2\,d\mu},\qquad d\mu=10^{-4}.
+\]
+Returns \code{(ΔQ, E, δn, ΔQ\_FH)}.
+\end{function}
+
+\subsection{\texorpdfstring{§9a: $\Delta Q$ versus segment length}{§9a: ΔQ versus segment length}}
+
+$\ell=2,4,\dots,48$ on 64 sites; cached in \nb{msh\_chain\_charge.jls} (\code{RUN\_CHARGE}). Each point is compared with \code{exact\_pair\_charge}. Points with $\ell\ge24$ are refined ($E_f<2\times10^{-6}$); unrefined points take about 6 s, refined points 42–73 s.
+
+\begin{table}[H]
+\centering\small
+\caption{Selected rows of the TN §9a output.}
+\begin{tabular}{rllllc}
+\toprule
+$\ell$ & $\Delta Q_{\rm MPS}$ & $\Delta Q_{\rm exact}$ & $-\partial E/\partial\mu$ & error (DMRG only) & refined\\
+\midrule
+2 & +7.214509e-01 & +7.214509e-01 & +7.215e-01 & $-3.7\times10^{-9}$ ($-3.7\times10^{-9}$) & \\
+10 & +5.012841e-02 & +5.012842e-02 & +5.013e-02 & $-8.4\times10^{-9}$ ($-8.4\times10^{-9}$) & \\
+16 & +4.043709e-03 & +4.043733e-03 & +4.044e-03 & $-2.3\times10^{-8}$ ($-2.3\times10^{-8}$) & \\
+24 & +1.126176e-04 & +1.126177e-04 & +1.126e-04 & $-2.9\times10^{-12}$ ($-3.9\times10^{-10}$) & yes\\
+30 & +7.112500e-06 & +7.128537e-06 & +7.129e-06 & $-1.6\times10^{-8}$ ($-1.2\times10^{-8}$) & yes\\
+36 & +4.333961e-07 & +4.342232e-07 & +4.342e-07 & $-8.3\times10^{-10}$ ($-1.2\times10^{-7}$) & yes\\
+48 & +1.672126e-09 & +1.496951e-09 & +1.503e-09 & $+1.8\times10^{-10}$ ($+1.5\times10^{-6}$) & yes\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The refinement lowers the error by one to four orders of magnitude for $\ell\ge32$. At $\ell=48$ the remaining error ($1.8\times10^{-10}$) is about 12\,\% of $\Delta Q$ itself ($1.5\times10^{-9}$).
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{tn_dQ.png}
+\caption{TN §9a. Left: $|\Delta Q|$ vs $\ell$ from MPS (DMRG only, and refined where $E<2\times10^{-6}$) and exact diagonalization. Right: $|\Delta Q_{\rm MPS}-\Delta Q_{\rm exact}|$; the shaded region marks the refined points.}
+\label{fig:tn-dQ}
+\end{figure}
+
+%----------------------------------------------------------------------
+\section{Time-dependent ramp (TN §10)}
+
+At $t=0$ every spin points along $\hat z$ and the Majoranas sit at the chain ends. Sites are rotated one after another, from both ends, into the in-plane AFM texture; the two domain walls move inward and carry the Majoranas toward the centre, stopping when $\ell_{\rm final}$ topological sites are left. This is the Kitaev notebook's ``moving the MZMs'' calculation with $\mu(x,t)$ replaced by spin rotation. The ramp is \code{SpinRamp} / \code{f\_nt} (Section 4).
+
+\emph{What is evolved.} Only the fermion mode. $\Gamma_1(t)-\Gamma_0(t)=|\psi_f(t)\rangle\langle\psi_f(t)|-|C\psi_f(t)\rangle\langle C\psi_f(t)|$ at all times (the shared bulk cancels and $U(t)$ commutes with $C$), so
+\[
+\delta n(x,t)=\sum_\sigma|u_\sigma(x,t)|^2-|v_\sigma(x,t)|^2,\qquad\Delta Q(t)=\langle\psi_f(t)|\tau_z|\psi_f(t)\rangle,
+\]
+with $i\partial_t\psi=H(t)\psi$. At $t=T$ the weight of $\psi_f$ outside the instantaneous $\pm E$ doublet is the \emph{leakage} into bulk quasiparticles (the non-adiabatic error). $|1\rangle$ is the state whose mode ends in $+E$; if $\psi_f$ ends in $-E$ the roles swap and $\Delta Q$ changes sign.
+
+\begin{function}{RampHamiltonian(L, p::SpinRamp; J=5.8, φ=π/2, model\_kw...)}
+\begin{Verbatim}
+struct RampHamiltonian
+    L::Int; p::SpinRamp; J::Float64; φ::Float64; model_kw
+    H_static::MPO; sites::Vector{<:Index}
+end
+\end{Verbatim}
+A callable struct: \code{R(t; cutoff=1e-14)} returns the BdG MPO $H(t)=H_{\rm static}+$ exchange$(t)$. $H_{\rm static}$ (hopping, $\mu$, Rashba, pairing) is built once with \code{msh\_chain(L, n -> 0.0; J=0.0)}. At each call the exchange is rebuilt exactly: for each component, \code{diag\_mpo\_exact} of $J S_n^k(t)$, entering the particle block as $\sigma_k$ (\code{:Pp}) and the hole block as $-\sigma_k^*$ (\code{:Ph}).
+
+Helpers: \code{f\_at(R, t)} returns \code{n -> f\_nt(R.p, n, t)}; \code{dense\_H(R, t)} is the dense reference \code{reference(R.L, f\_at(R, t); J, φ, model\_kw...)}.
+
+\emph{Check.} For $L=6$, $\ell_{\rm final}=4$, $T=390$: $\|H_{\rm MPO}-H_{\rm dense}\|=$ 1.2e-12, 4.9e-12, 3.4e-12, 1.3e-12 at $t=0,130,260,390$, with MPO bond dimensions 5, 12, 12, 10. The printed profile at $t=150$ shows fully rotated sites near the ends, a wall about 10 sites wide, and unrotated sites in the middle.
+\end{function}
+
+\begin{function}{final\_branches(H, sites; refine\_σ=1e-3)}
+Instantaneous $\pm E$ doublet of an MPO Hamiltonian: \code{zero\_mode\_subspace} (cutoffs $10^{-20}$), one \code{refine\_subspace} step, then a $2\times2$ Ritz problem $H_s c=ES c$ in the refined pair. Returns $\psi_+$, $\psi_-$ and $E_+$.
+\end{function}
+
+\begin{function}{run\_spin\_ramp(R; dt=0.1, nsnap=200, maxdim=64, cutoff=1e-20, tol=1e-12, krylovdim=30)}
+\begin{Verbatim}
+1. ψ_f(0) from the t = 0 Hamiltonian (zero-mode pair + one refinement step, localization,
+   Cγ = γ, pairing).
+2. TDVP with H frozen at the midpoint of each step.  reverse_step = true is required: the package
+   default (false) skips TDVP's backward sub-steps and gives wrong dynamics.
+3. At t = T: overlaps with the instantaneous ±E doublet → leakage 1 − p₊ − p₋.
+Returns ΔQ(t) and `nsnap + 1` snapshots of ψ_f.
+\end{Verbatim}
+\emph{Details.} $n_{\rm steps}=\mathrm{round}(T/dt)$ and $dt$ is reset to $T/n_{\rm steps}$. $\psi_f(0)$ comes from \code{majorana\_fermion(R(0.0), sites; refine\_σ=1e-3, cutoff=1e-20, cutoff\_K=1e-20)}. The evolution is \code{TB.evolve\_with\_tdvp\_timedep(t -> R(t), r0.ψf, nsteps, dt; maxdim, cutoff, tol, krylovdim, reverse\_step=true)}. At $t=T$, $p_\pm=|\langle\psi_\pm|\psi(T)\rangle|^2$ from \code{final\_branches}; if $p_->p_+$ the sign $\sigma=-1$ is applied to $\Delta Q$ and $p_\pm$ are swapped. Samples are at \code{unique(round.(Int, range(1, nsteps + 1; length=nsnap + 1)))}. Returns \code{T, dt, E0, leak, p\_wrong, E₊, ΔQ\_final, ΔQ\_adiabatic} ($=\Delta Q$ of $\psi_+$), \code{times, ΔQ\_t, snapshots, σ, maxχ}.
+\end{function}
+
+\begin{function}{run\_spin\_ramp\_exact(R; dt=0.1, nsnap=200)}
+Dense reference with the same midpoint propagator, initial pairing and end-of-ramp analysis:
+\[
+\psi\leftarrow\exp\bigl(-i\,dt\,H(t_k-dt/2)\bigr)\psi,\qquad t_k=k\,dt .
+\]
+$\psi_f(0)$ is built from the two smallest-$|E|$ eigenvectors of \code{dense\_H(R, 0)}: localized by the position operator \code{Diagonal(repeat(0:N-1, 4))}, phase-fixed with $C$ implemented as \code{Cd(v) = vcat(conj(v[2N+1:end]), conj(v[1:2N]))} ($\tau_xK$), paired as $(\gamma_1+i\gamma_2)/\|\cdot\|$, and replaced by $C\psi$ if its energy is negative. $\Delta Q=\langle\psi|\tau_z|\psi\rangle$ with $\tau_z=\mathrm{diag}(\mathbb 1_{2N},-\mathbb 1_{2N})$ is recorded at the same samples. At $T$ the leakage uses the dense eigenvectors at the first positive eigenvalue and the one below. Returns \code{leak, p\_wrong, ΔQ\_final, ΔQ\_t, ψ\_t, σ}.
+\end{function}
+
+\begin{function}{adiabatic\_reference(R, t) -> (ΔQ\_ad, E\_gap)}
+$\Delta Q$ of the instantaneous $+E$ state of $H(t)$ and the bulk gap (third smallest $|E|$), from the dense matrix. The pair is the two levels with the smallest $|E|$. While the Majoranas are far apart, the splitting falls below round-off and the two members are numerically degenerate, so ``the $+E$ state'' would be an arbitrary mix with an $O(1)$ $\Delta Q$; the true value is then below $\sim2\times10^{-9}$, so $\Delta Q_{\rm ad}$ is set to 0 when $E_+<10^{-11}$. The bound follows from
+Feynman--Hellmann (as the docstring now explains): with $E\propto e^{-\kappa\ell}$, $\Delta Q=-\partial E/\partial\mu\approx(\partial\kappa/\partial\mu)\,\ell E$,
+and the §9a data give $\Delta Q/(\ell E)\to2.6$ (2.63 at $\ell=48$), so $E<10^{-11}$ and $\ell\le64$ mean $\Delta Q\lesssim2\times10^{-9}$. The notebook recommends this function over \code{findfirst(>(0), E)} for that reason.
+\end{function}
+
+\subsection{§10a: the ramp on 64 sites}
+
+\code{ramp\_params = (L = 6, rot\_T = 100.0, step\_T = 0.1, ℓ\_final = 4)}, $T=390$, cached in \nb{msh\_chain\_ramp.jls} (\code{RUN\_RAMP}). The cell runs \code{run\_spin\_ramp} and \code{run\_spin\_ramp\_exact}, computes $W=|\psi_f(x,t)|^2$ and $\delta n$ with \code{uv\_profile} on the MPS snapshots (times $\sigma$), the dense $\delta n$ from \code{ψ\_t}, and \code{adiabatic\_reference} at every sample. Only derived quantities are saved, not MPS snapshots.
+
+\begin{table}[H]
+\centering\small
+\caption{Printed results of TN §10a.}
+\begin{tabular}{lcc}
+\toprule
+ & MPS / TDVP & exact\\
+\midrule
+$E(0)$ & 1.3e-14 & —\\
+leakage $1-p_+-p_-$ & 2.143e-04 & 2.143e-04\\
+wrong branch $p_-$ & 3.7e-18 & 4.1e-27\\
+$\Delta Q(T)$ & +0.516615 & +0.516615\\
+adiabatic $\Delta Q(T)$ & +0.519062 & —\\
+max bond dimension & 16 & —\\
+run time & 177 s & 49 s\\
+\midrule
+$\max_t|\Delta Q_{\rm MPS}-\Delta Q_{\rm exact}|$ & \multicolumn{2}{c}{4.1e-07}\\
+$\max_{x,t}|\delta n_{\rm MPS}-\delta n_{\rm exact}|$ & \multicolumn{2}{c}{2.6e-07}\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\linewidth]{tn_ramp.png}
+\caption{TN §10a. Top left: rotation profile $f_n(t)$. Top right: $|\psi_f(x,t)|^2$ (log scale); it rides the two walls (dashed: wall centres) into the middle. Bottom left: $\delta n(x,t)=n_1-n_0$, exponentially small until the Majoranas approach each other. Bottom right: $\Delta Q(t)$ from TDVP, exact evolution and the instantaneous adiabatic value. The notebook describes the wiggles of about $\pm0.01$ mid-ramp as physical (interference with the small bulk component the ramp excites).}
+\label{fig:tn-ramp}
+\end{figure}
+
+%----------------------------------------------------------------------
+\section{How to adapt the notebook (TN §11)}
+
+\begin{itemize}
+\item \textbf{Spin texture:} pass any \code{f(n)}, e.g.\ \code{f\_wall(n) = n < 20 ? 1.0 : 0.0} (single wall) or \code{f\_ramp(n) = clamp((n - 16) / 32, 0, 1)}. For time-dependent protocols use \code{RampHamiltonian}, which rebuilds only the exchange.
+\item \textbf{Parameters:} keyword arguments, e.g.\ \code{msh\_chain(6, f; μ=-6.5, J=5.0, Δ=2.0)}; the same keywords go to \code{ldos}.
+\item \textbf{Bigger chains:} \code{msh\_chain} works at large $L$ (small bond dimension; $O(2^L)$ memory for the diagonal MPOs). \code{dense}, \code{reference}, \code{ldos} need $L\le7$. Use \code{majorana\_fermion}/\code{majorana\_pair\_charge}, \code{run\_spin\_ramp} and \code{msh\_tb} + \code{get\_ldos\_spatial} directly; \code{uv\_profile} and \code{δn\_mode} work at any size; the \code{exact\_*} functions and \code{adiabatic\_reference} are dense checks only.
+\item \textbf{Pitfalls:} do not add \code{add\_superconductivity!}, \code{add\_zeeman!} or \code{add\_soc!} terms ($\tau_z$ hole block, periodic Rashba bond); \code{:Sx/:Sy/:Sz} are $\sigma/2$; build sharp profiles with \code{diag\_mpo\_exact}, not QTCI, for $L\ge8$; pass \code{reverse\_step = true} to TDVP; refine only when the pair splitting is far below $\sigma$; use \code{adiabatic\_reference} for the $+E$ state; regenerate the \nb{.jls} caches after changing definitions.
+\item \textbf{Ramp:} \code{SpinRamp(N=N, rot\_T=..., step\_T=..., ℓ\_final=...)}; edit \code{f\_nt} for a different rotation order (one end only, a single wall); \code{ramp\_params} in §10a sets the saved run.
+\end{itemize}
+
+%----------------------------------------------------------------------
+\section{Saving results (TN, last section)}
+
+The final cell (\code{using NPZ}) writes 43 arrays to \nb{msh\_chain\_tn\_results.npz}. The sweep and Lorentzian LDOS are recomputed; KPM, charge and ramp arrays come from the cached \code{kpm}, \code{charge} and \code{ramp} results, and the Majorana arrays from a fresh \code{majorana\_fermion} run. Centres are stored 0-indexed (\code{r.centers .- 1}).
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{>{\raggedright}p{6.3cm}X}
+\toprule
+Keys & Content (section)\\
+\midrule
+\code{sweep\_f}, \code{sweep\_E13} & $|E|_1,|E|_3$ of the densified MPO vs $f$ (§5)\\
+\code{ldos\_omega}, \code{ldos\_p\_j}, \code{ldos\_h\_j} & Lorentzian particle/hole LDOS, snapshots $j=0\dots3$ (§6)\\
+\code{kpm1024\_omega}, \code{kpm1024\_tb\_j}, \code{kpm1024\_exact\_j} & p + h KPM LDOS: \code{get\_ldos\_spatial} and \code{kpm\_exact} (§7a)\\
+\code{mzm\_centers\_j}, \code{mzm\_gamma\_weight\_j}, \code{mzm\_E\_f\_j} & DMRG Majoranas, $j=0$: $f=0$, $j=1$: domain (§8a)\\
+\code{charge\_ells}, \code{charge\_dQ\_mps}, \code{charge\_dQ\_mps\_raw}, \code{charge\_dQ\_exact}, \code{charge\_dQ\_FH}, \code{charge\_E\_exact}, \code{charge\_dn\_exact} & $\Delta Q(\ell)$: MPS refined / DMRG only, exact, $-\partial E_f/\partial\mu$, $E_f$; exact $\delta n(x)$ ($\ell\times x$) (§9a)\\
+\code{ramp\_times}, \code{ramp\_dQ\_t\_mps}, \code{ramp\_dQ\_t\_exact}, \code{ramp\_dn\_t\_mps}, \code{ramp\_dn\_t\_exact}, \code{ramp\_dQ\_adiabatic\_t}, \code{ramp\_leak\_*}, \code{ramp\_dQ\_final\_*} & $\Delta Q(t)$, $\delta n(x,t)$ ($x\times t$), adiabatic $\Delta Q$, leakage, final $\Delta Q$; TDVP and exact (§10a)\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+%======================================================================
+\clearpage
+\part{Dense Python notebook \texorpdfstring{\nb{msh\_chain\_python\_ed.ipynb}}{msh\_chain\_python\_ed.ipynb}}
+
+The notebook reruns the TN calculations with the dense NumPy BdG code ``from the earlier work'', so the two can be compared number by number. Imports: \code{numpy}, \code{matplotlib}, \code{numba}, \code{warnings} (and \code{ipywidgets} in §7b). All results go into the dict \code{results}, saved at the end. Sites are 0-indexed. Section numbers below are those of the Python notebook; Section~\ref{sec:mapping} gives the Julia counterparts.
+
+%----------------------------------------------------------------------
+\section{Model (Python §0)}
+
+\paragraph{Constants.} \code{pauli} is the $4\times2\times2$ array $(\sigma_0,\sigma_x,\sigma_y,\sigma_z)$. Kronecker products $\tau_a\otimes\sigma_b$ (\code{t} = particle–hole, \code{s} = spin): \code{tzs0}, \code{tzsy}, \code{t0sx}, \code{t0sy}, \code{t0sz}, \code{txs0}, \code{tysy}. \code{params = dict(t=1.0, mu=-7.0, alpha=0.9, Delta=2.4, J=5.8)}.
+
+\begin{function}{smoothstep(t)}
+\code{@numba.vectorize}: 0 for $t<0$, 1 for $t>1$, $\sin^2(\pi t/2)$ otherwise. Same as the Julia \code{smoothstep}.
+\end{function}
+
+\begin{function}{spin\_texture(f, N, phi=np.pi/2)}
+Returns a dict \code{S[x] = (Sx, Sy, Sz)} for $x=0\dots N-1$ with $\theta_x=(-1)^x\frac\pi2 f(x)$. Unlike the Julia closure, it takes $N$ and evaluates all sites at once.
+\end{function}
+
+\begin{function}{calc\_msh\_ham(N, S, t, mu, alpha, Delta, J, pbc=False)}
+Real-space BdG matrix in the spinor $\psi^\dagger=(c^\dagger_\uparrow,c^\dagger_\downarrow,c_\downarrow,-c_\uparrow)$, built as an $(N,4,N,4)$ array and reshaped to $4N\times4N$ (site-major):
+\begin{Verbatim}
+H[i,:,i,:] = -mu * tzs0 + Delta * txs0                      # onsite and s-wave pairing
+H[x,:,x,:] += J * (Sx * t0sx + Sy * t0sy + Sz * t0sz)       # exchange
+H[i+1,:,i,:] = -t * tzs0 - 1j*alpha * tzsy                  # hopping and Rashba
+H[i,:,i+1,:] = -t * tzs0 + 1j*alpha * tzsy
+\end{Verbatim}
+\code{pbc=True} adds the bond between the chain ends. In this basis the pairing is $\Delta\tau_x$ and the exchange is $\tau_0\otimes J\,\mathbf S\cdot\boldsymbol\sigma$. The Rashba sign is opposite to the Julia model (see Overview).
+\end{function}
+
+\begin{function}{msh\_ham(N, f, **kw)}
+\code{calc\_msh\_ham(N, spin\_texture(f, N), **{**params, **kw})}: the Hamiltonian for a rotation profile, with parameter overrides. Used everywhere below.
+\end{function}
+
+\begin{function}{reference\_julia(N, f, t=1.0, mu=-7.0, alpha=0.9, Delta=2.4, J=5.8, phi=np.pi/2)}
+Port of the Julia \code{reference}: basis (nambu, spin, $x$), hole block $-H_0^*$. Used in §1 as a check that the Python and Julia models agree.
+\end{function}
+
+\begin{function}{isPH(H)}
+Returns $\max|H+(\mathbb 1_N\otimes\tau_y\sigma_y)\,H^*\,(\mathbb 1_N\otimes\tau_y\sigma_y)|$, the particle–hole error for $H=-\tau_y\sigma_yH^*\tau_y\sigma_y$.
+\end{function}
+
+\begin{function}{particle\_hole\_weights(wf)}
+Spin-summed particle weights $|w_{x,0}|^2+|w_{x,1}|^2$ and hole weights $|w_{x,2}|^2+|w_{x,3}|^2$ per site, each $N\times n_{\rm states}$, from the reshaped $(N,4,n)$ wavefunctions. Python counterpart of the \code{wp}, \code{wh} lines of Julia \code{ldos} and of \code{uv\_profile}.
+\end{function}
+
+\begin{function}{lorentz\_ldos(en, w, omega, eta)}
+$\sum_kw[x,k]\,\delta_\eta(\omega-E_k)$ with $\delta_\eta(x)=(\eta/\pi)/(x^2+\eta^2)$, returned as $N_\omega\times N$. Together with \code{particle\_hole\_weights} it equals Julia \code{ldos}.
+\end{function}
+
+\begin{function}{ramp\_f, ramp\_duration, ramp\_wall, cases\_for}
+\begin{Verbatim}
+def ramp_f(time, N, ell_final=4, rot_T=100.0, step_T=0.1, t0=0.0)
+def ramp_duration(N, ell_final=4, rot_T=100.0, step_T=0.1, t0=0.0)
+def ramp_wall(time, N, ell_final=4, rot_T=100.0, step_T=0.1, t0=0.0)
+def cases_for(N, ell_final=0)
+\end{Verbatim}
+Ports of the Julia \code{SpinRamp} methods: \code{ramp\_f} returns $n\mapsto f_n(t)$ (Julia \code{f\_nt}), \code{ramp\_duration} is \code{duration}, \code{ramp\_wall} is \code{wall\_L} (vectorized with \code{np.clip}). \code{cases\_for(N, ell\_final=0)} is \code{ldos\_snapshots}: four labelled profiles at $t=0,T/3,2T/3,T$ of the ramp with every site rotated.
+\end{function}
+
+%----------------------------------------------------------------------
+\section{Hamiltonian check and spectrum sweep (Python §1–2)}
+
+\paragraph{§1.} For the four snapshots, \code{calc\_msh\_ham} is compared with \code{reference\_julia}. The bases differ, so the cell compares spectra and the spin-summed particle LDOS (\code{lorentz\_ldos}, $\eta=0.03$), both basis-independent, and prints \code{isPH}:
+
+\begin{table}[H]
+\centering\small
+\begin{tabular}{lccccc}
+\toprule
+Snapshot & $\max|E-E_{\rm ref}|$ & LDOS error & PH error & $|E|_1$ & $|E|_3$\\
+\midrule
+$t=0$ & 1.2e-14 & 1.5e-13 & 0 & 9.51e-17 & 0.255\\
+$t=T/3=137$ & 8.9e-15 & 4.9e-13 & 0 & 2.00e-10 & 0.257\\
+$t=2T/3=273$ & 1.2e-14 & 8.9e-13 & 0 & 1.55e-04 & 0.277\\
+$t=T=410$ & 1.1e-14 & 9.8e-13 & 0 & 1.38 & 1.378\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{§2.} The uniform-rotation sweep $f=0,0.1,\dots,1$ (\code{np.linalg.eigvalsh(msh\_ham(N, lambda n: fv))}). The printed $|E|_1,|E|_3$ match the Julia §5 table; saved as \code{sweep\_f}, \code{sweep\_E13}.
+
+%----------------------------------------------------------------------
+\section{Lorentzian LDOS (Python §3)}
+
+Same four snapshots, $\omega\in[-3,3]$ (601 points), $\eta=0.03$, three-row figure as Julia §6. For each snapshot: \code{np.linalg.eigh(msh\_ham(N, f))} → \code{particle\_hole\_weights} → \code{lorentz\_ldos} for particle and hole. Printed $\max|A_h(\omega)-A_p(-\omega)|$: 4.3e-13, 7.4e-13, 6.9e-13, 7.7e-13. The lambda \code{cmax} is the 99.5th-percentile colour limit. Saved: \code{ldos\_omega}, \code{ldos\_p\_j}, \code{ldos\_h\_j}.
+
+%----------------------------------------------------------------------
+\section{Jackson-KPM LDOS (Python §4)}
+\label{sec:py-kpm}
+
+Port of Julia \code{kpm\_exact} and TensorBinding's \code{\_kpm\_weight\_matrix}: the KPM LDOS from the exact eigenpairs, which is what \code{get\_ldos\_spatial} converges to as the MPS truncation error goes to zero. Results are in physical units.
+
+\begin{function}{kpm\_scale(t=1.0, mu=-7.0, alpha=0.9, Delta=2.4, J=5.8)}
+$1.05\,(|\mu|+|J|+2\sqrt{t^2+\alpha^2}+|\Delta|)$, the \code{msh\_tb} default. Printed: scale $=18.785261$.
+\end{function}
+
+\begin{function}{jackson(Ncheb)}
+Unnormalized Jackson factors $N_{\rm cheb}\,g_n$, ``as in TensorBinding's \code{\_kpm\_kernel}'':
+\[
+N_{\rm cheb}\,g_n=(N_{\rm cheb}-n)\cos\frac{\pi n}{N_{\rm cheb}}+\sin\frac{\pi n}{N_{\rm cheb}}\cot\frac{\pi}{N_{\rm cheb}},\qquad n=0\dots N_{\rm cheb}-1 .
+\]
+The textbook Jackson kernel for $M$ moments (Weiße \emph{et al.}, Rev.\ Mod.\ Phys.\ \textbf{78}, 275 (2006)) is
+$g_n=[(M-n+1)\cos\frac{\pi n}{M+1}+\sin\frac{\pi n}{M+1}\cot\frac{\pi}{M+1}]/(M+1)$; with $M=N_{\rm cheb}-1$ it is exactly the expression above
+divided by $N_{\rm cheb}$. So using $N_{\rm cheb}$ in place of $N_{\rm cheb}+1$ is the Jackson kernel for $N_{\rm cheb}-1$ moments: $g_0=1$ (the
+normalization, hence the sum rule, is unchanged) and the weight of the last moment is $\cos(\pi-\pi/N)+\cos(\pi/N)=0$. The resolution is that of
+$N_{\rm cheb}-1$ moments, a relative change of $1/N_{\rm cheb}$. TensorBinding's \code{\_kpm\_kernel} says the same in its source comment; the
+code now carries this explanation.
+\end{function}
+
+\begin{function}{kpm\_weight\_matrix(Ncheb, w)}
+$W_{n,\tilde\omega}=c_n\,N_{\rm cheb}g_n\,T_n(\tilde\omega)$ for $|\tilde\omega|<1$ (0 outside), with $c_0=1$, $c_{n>0}=2$ and $T_n(\tilde\omega)=\cos(n\arccos\tilde\omega)$.
+\end{function}
+
+\begin{function}{kpm\_ldos(en, w, omega, Ncheb, scale, center=0.0)}
+Jackson-KPM LDOS in physical units, $N_\omega\times N$, from eigenvalues \code{en} and weights \code{w[x, k]}:
+\[
+\mu_n(x)=\sum_kw[x,k]\,T_n(\tilde E_k),\qquad
+A(x,\omega)=\frac{\pi}{\text{scale}}\cdot\frac{\sum_nW_{n,\tilde\omega}\,\mu_n(x)}{\pi^2N_{\rm cheb}\sqrt{1-\tilde\omega^2}},
+\]
+i.e.\ the standard KPM expansion $\frac{1}{\pi\,\text{scale}\sqrt{1-\tilde\omega^2}}\bigl[g_0\mu_0+2\sum_{n\ge1}g_n\mu_nT_n(\tilde\omega)\bigr]$. $\tilde E$ is clipped to $[-1,1]$ and $A=0$ for $|\tilde\omega|\ge1$.
+\end{function}
+
+\paragraph{§4 cell.} Four snapshots, $N_{\rm cheb}=1024$, 241 points in $[-3,3]$, weights $p+h$. A sum-rule check integrates the LDOS over 20001 points in $\pm0.999\,\text{scale}$: $\int A\,d\omega=4.0000$ on every site for every snapshot (expected 4: two spins × two Nambu sectors). Printed $\max A$: 2.594, 4.774, 4.854, 4.854. Saved: \code{kpm1024\_omega}, \code{kpm1024\_ph\_j}.
+
+%----------------------------------------------------------------------
+\section{Majorana modes (Python §5)}
+\label{sec:py-mzm}
+
+The Majorana construction of the earlier work (\code{takagi}, \code{individual\_MZMs}, \code{fix\_unitary}) with a \code{np.repeat} position operator. \code{individual\_MZMs} now accepts \code{nzero}, which selects the \code{nzero} states with smallest $|E|$ (as the Julia code does) instead of the window $|E|<$ \code{tol}; for short segments the pair splitting exceeds any sensible \code{tol}.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{>{\raggedright}p{3.6cm}X}
+\toprule
+Function & What it does\\
+\midrule
+\code{dag(A, axis1, axis2)} & Hermitian conjugate (swap the last two axes and conjugate; conjugate only for 1D).\\
+\code{PHconj(psi)} & Particle–hole conjugation $C\psi=\tau_y\sigma_y\psi^*$ applied site by site to the columns of \code{psi} (``\code{ltslts}'', ``\code{udd-u}'').\\
+\code{dQ\_mode(psi)} & $\Delta Q=\langle\psi|\tau_z|\psi\rangle=\sum|u|^2-|v|^2$ (Julia \code{ΔQ\_mode}).\\
+\code{dn\_mode(psi)} & $\delta n(x)=\sum_\sigma|u_\sigma(x)|^2-|v_\sigma(x)|^2$ (Julia \code{δn\_mode}).\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{function}{takagi(A)}
+Comment in the code: ``Diagonalize a complex symmetric matrix as $A=UDU^T$, $U$ unitary and $D$ diagonal''. Steps:
+\begin{Verbatim}
+B = dag(A)@A;  b, V = np.linalg.eigh(B)        # eigenbasis of A†A
+C = V.T@A@V;   X = C.real;  Y = C.imag
+w, W = np.linalg.eigh(X+Y);  U = V@W
+z = np.sum(U*(A@U), axis=0);  r = np.abs(z)     # z_k = (UᵀAU)_kk
+U *= (r/z)**0.5                                 # phase fix so that the diagonal is r ≥ 0
+return r, U.conj()
+\end{Verbatim}
+Returns the Takagi values $r$ and the conjugated factor.
+
+\emph{Why it works} (now also in the code comments). $C=V^TAV$ is complex symmetric, and
+$C^\dagger C=V^\dagger A^\dagger A V=\mathrm{diag}(b)$ because $V^*V^T=(VV^\dagger)^*=\mathbb 1$. Writing $C=X+iY$ with $X$, $Y$ real symmetric,
+$C^\dagger C=X^2+Y^2+i[X,Y]$; this is real, so $[X,Y]=0$. Commuting real symmetric matrices have a common real orthogonal eigenbasis $W$, which
+\code{eigh(X+Y)} finds as long as $X+Y$ has no accidental degeneracy. Then $U=VW$ is unitary and $U^TAU=W^TCW=\mathrm{diag}(z_k)$; the phase
+fix $U\to U\,\mathrm{diag}(e^{-i\theta_k/2})$ makes it $\mathrm{diag}(r_k)$. Hence $A=U^*\,\mathrm{diag}(r)\,U^\dagger$, i.e.\ the factor $Z$ of
+$A=ZDZ^T$ is $Z=U^*$, which is why the function returns \code{U.conj()}. In the zero-mode pair $A^\dagger A=\mathbb 1$ ($b_k=1$, any $V$ is
+an eigenbasis), and the argument still holds.
+\end{function}
+
+\begin{function}{individual\_MZMs(E, M, Nx, Ny, tol=1e-3, nzero=None)}
+Separates the zero-energy subspace into localized Majoranas. Returns \code{(mbs, mask, M, r)}: the Majoranas ($4N\times n$, sorted by position), the boolean column mask of the subspace, the eigenvector matrix and the centres $\langle x\rangle$.
+\begin{enumerate}
+\item \emph{Subspace.} With \code{nzero}: the \code{nzero} smallest $|E|$. Otherwise $|E|<$ \code{tol}; if the count is odd, the next-smallest state is added with a warning.
+\item \emph{Majoranas.} $C_{ij}=\langle\psi_i|C\psi_j\rangle$ (\code{dag(psi) @ PHconj(psi)}) is factorized with \code{takagi}; $\gamma=\psi Z$ are ``eigenstates of $C$'' (code comment). Indeed, $C$ is antiunitary and the subspace is
+closed under it, so $C\psi_j=\sum_i\psi_iC_{ij}$ and $C\gamma=(C\psi)Z^*=\psi\,C_{\rm mat}Z^*=\psi ZD\,Z^TZ^*=\gamma D$ with $Z^TZ^*=(Z^\dagger Z)^*=\mathbb 1$;
+$D=\mathbb 1$ here, so every column is a Majorana. This is the conjugated factor that \code{takagi} returns.
+\item \emph{Localize.} The site-major position operator \code{x = np.repeat([i*Ny + j ...], 4)} (here $N_y=1$, so $x$ = site index) gives $R=\gamma^\dagger x\gamma$; \code{np.linalg.eigh(R.real)} returns ascending centres $r$ and the rotation $O$; \code{mbs = gamma @ O}. Since $C$ commutes with $x$,
+$R_{ij}=\langle\gamma_i|x\gamma_j\rangle=\langle C\gamma_i|xC\gamma_j\rangle^*=R_{ij}^*$ is real (\code{.real} only drops round-off); $O$ is then real
+orthogonal and $\gamma O$ stays self-conjugate.
+\end{enumerate}
+\end{function}
+
+\begin{function}{fix\_unitary(mbs, mask, M)}
+Pairs Majoranas $0$–$1$, $2$–$3$, … into fermions with $U=\frac{1}{\sqrt2}\begin{pmatrix}1&1\\i&-i\end{pmatrix}$, i.e.\ columns $(\gamma_{2k}+i\gamma_{2k+1})/\sqrt2$ and $(\gamma_{2k}-i\gamma_{2k+1})/\sqrt2$, reorders them (all first members, then all second members, with the first half reversed) and writes them into \code{M[:, mask]}.
+With $\varphi_k=(\gamma_{2k}+i\gamma_{2k+1})/\sqrt2$, the second column of each pair is $C\varphi_k$. The first reordering gives
+$[\varphi_0,\varphi_1,\dots,C\varphi_0,C\varphi_1,\dots]$; reversing the first half gives $[\varphi_{n/2-1},\dots,\varphi_0,C\varphi_0,\dots,C\varphi_{n/2-1}]$, so that
+column $2N-1-k$ holds $\varphi_k$ and column $2N+k$ holds $C\varphi_k$. That is the structure of the \code{eigh} columns of any BdG matrix: with
+energies sorted, $E_{2N+k}=-E_{2N-1-k}$ and the two columns are $C$ partners. The fixed $M$ is therefore again of the form
+$\begin{pmatrix}U&V^*\\V&U^*\end{pmatrix}$ up to the column order, and the masks (column $2N+k$ occupied $\Leftrightarrow$ column $2N-1-k$ empty) work for
+any number of pairs. For $n=2$ the reversal does nothing (the reason for it is now in the code comment). For $n=2$ the result is column $2N-1=(\gamma_1+i\gamma_2)/\sqrt2$, column $2N=(\gamma_1-i\gamma_2)/\sqrt2$, which \code{majorana\_fermion} may then swap.
+\end{function}
+
+\begin{function}{majorana\_fermion(H)}
+\begin{Verbatim}
+"""Majoranas γ1, γ2 and fermion ψf (+E member) of the lowest pair.
+
+Returns centers, γs (4N x 2), ψf, E_f and the fixed unitary M (column 2N = ψf, 2N-1 = Cψf).
+"""
+\end{Verbatim}
+Full diagonalization (\code{np.linalg.eigh}), \code{individual\_MZMs(..., nzero=2)}, \code{fix\_unitary}, then the energies $\mathrm{Re}\langle M_k|H|M_k\rangle$ of the two pair columns; if column $2N$ has negative energy, the two columns are swapped so that column $2N$ is always the $+E$ member $\psi_f$. Returns \code{dict(centers, gammas, psi\_f, E\_f, M, en)}. The fixed unitary \code{M} (all $4N$ eigenvectors with the pair replaced) is what the ramp evolves. Julia counterpart: \code{majorana\_fermion(HB, sites)} (DMRG instead of full diagonalization).
+\end{function}
+
+\paragraph{§5 cell.} The same two textures as Julia §8a. Printed: centres $[1.41,\ 61.59]$ and $[16.55,\ 46.45]$; $\|C\gamma_i-\gamma_i\|\le2.8\times10^{-14}$; $\max|\langle\gamma_i|\gamma_j\rangle-\delta_{ij}|\le1.4\times10^{-15}$; $\max|\mathrm{Re}\,H_{ij}|\le5.1\times10^{-17}$; all normalizations 1 to 12 digits; $E_f=1.179\times10^{-14}$ (exact $5.070\times10^{-15}$) and $3.319\times10^{-8}$ (exact $3.319\times10^{-8}$). Saved: \code{mzm\_centers\_j}, \code{mzm\_E\_f\_j}, \code{mzm\_gamma\_weight\_j}.
+
+%----------------------------------------------------------------------
+\section{Charge difference vs Majorana separation (Python §6)}
+
+Centred topological segment of $\ell$ sites. Three values per $\ell$: the single-mode $\Delta Q=\langle\psi_f|\tau_z|\psi_f\rangle$ (what Julia \code{majorana\_pair\_charge} computes); the many-body $Q(|1\rangle)-Q(|0\rangle)$ from the charge density of Slater states built from the fixed unitary; and the Feynman–Hellmann $-\partial E_f/\partial\mu$.
+
+\begin{table}[H]
+\centering\small
+\begin{tabularx}{\linewidth}{>{\raggedright}p{3.6cm}X}
+\toprule
+Function & What it does\\
+\midrule
+\code{segment(N, ell)} & \code{range((N-ell)//2, (N-ell)//2 + ell)}, same as Julia.\\
+\code{f\_segment(N, ell)} & 0 inside the segment, 1 outside.\\
+\code{charge\_density(M, cols)} & Spin-summed electron density per site of the state filling columns \code{cols}: particle diagonal of $G=M_{\rm cols}M_{\rm cols}^\dagger$, $\rho(x)=G_{4x,4x}+G_{4x+1,4x+1}$.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+
+\begin{function}{pair\_charge(L, ell, dmu=1e-4, **kw)}
+Python counterpart of \code{majorana\_pair\_charge} and \code{exact\_pair\_charge} combined. Builds \code{msh\_ham(N, f\_segment(N, ell))}, calls \code{majorana\_fermion} and uses the fixed unitary \code{M}:
+\begin{Verbatim}
+occ0 = np.arange(2*N)                               # |0⟩: columns 0 … 2N−1
+occ1 = np.r_[np.arange(2*N - 1), 2*N]              # |1⟩: 2N−1 → 2N
+drho = charge_density(M, occ1) - charge_density(M, occ0)
+\end{Verbatim}
+$|0\rangle$ fills columns $0\dots2N-1$ (negative-energy bulk and $C\psi_f$); $|1\rangle$ replaces column $2N-1$ by column $2N$ ($\psi_f$). The Feynman–Hellmann value uses the smallest $|E|$ at $\mu\pm d\mu$ (central difference). Returns \code{dict(dQ, dQ\_mb, dQ\_FH, E, dn, drho)}: single-mode $\Delta Q$ (\code{dQ\_mode}), many-body $\sum_x\Delta\rho$, $-\partial E_f/\partial\mu$, $E_f$, $\delta n$ (\code{dn\_mode}) and $\Delta\rho(x)$.
+\end{function}
+
+\paragraph{§6 cell.} $\ell=2,4,\dots,48$ on 64 sites. Single-mode and many-body values agree to the printed digits at every $\ell$ (e.g.\ $\ell=2$: $+0.7214509$; $\ell=48$: $+1.496954\times10^{-9}$ vs $+1.496953\times10^{-9}$), $\max|\delta n-\Delta\rho|\le2.1\times10^{-15}$, and $-\partial E/\partial\mu$ agrees with them to about $10^{-3}$ relative or better; the largest relative differences are at $\ell\ge44$ (e.g.\ $\ell=44$: $9.985\times10^{-9}$ vs $9.994\times10^{-9}$). $E_f$ falls from $0.147$ ($\ell=2$) to $1.19\times10^{-11}$ ($\ell=48$). Saved: \code{charge\_ells}, \code{charge\_dQ}, \code{charge\_dQ\_mb}, \code{charge\_dQ\_FH}, \code{charge\_E}, \code{charge\_dn}.
+
+%----------------------------------------------------------------------
+\section{Spin ramp (Python §7)}
+\label{sec:py-ramp}
+
+Same two-sided ramp as Julia \code{SpinRamp} (\code{ramp\_f}). The notebook notes that the earlier \code{spin\_timedep} rotated from the right end only.
+
+\begin{function}{run\_spin\_ramp(L, dt=0.1, nsnap=200, model\_kw=\{\}, **paramsT)}
+\emph{Initial state.} \code{majorana\_fermion} of $H(0)$; the whole $4N\times4N$ fixed unitary \code{M} is evolved (column $2N=\psi_f$, column $2N-1=C\psi_f$).
+
+\emph{Logical states as masks} (as in the CZ, QFT and period-finding notebooks):
+\begin{Verbatim}
+masks = np.zeros((n_states, 4*N), bool)       # columns 2N+1 … 4N−1 (excited states) empty
+masks[1, 2*N] = True                          # |1⟩: fermion mode ψf filled; |0⟩: empty
+masks[:, :2*N] = np.flip(~masks[:, 2*N:], axis=1)   # particle-hole partners: column 2N−1−k = C(column 2N+k)
+\end{Verbatim}
+So $|0\rangle$ fills columns $0\dots2N-1$, and $|1\rangle$ fills $0\dots2N-2$ and $2N$.
+
+\emph{Time step.} With $H$ at the midpoint $t+dt/2$ (as the Julia code does),
+\[
+\psi\leftarrow V\,e^{-iE\,dt}\,V^\dagger\,\psi,\qquad (E,V)=\texttt{eigh}\bigl(H(t+dt/2)\bigr),
+\]
+followed by normalization of every column. $n_{\rm steps}=\mathrm{round}(T/dt)$, $dt=T/n_{\rm steps}$.
+
+\emph{Observables at the samples} (the same 201 indices as Julia, \code{round(linspace(1, nsteps+1, nsnap+1)) - 1}): for each logical state $j$, $G_j=\psi[:,\text{mask}_j]\,\psi[:,\text{mask}_j]^\dagger$ and the per-spin particle diagonal \code{charge\_density\_t[n, j, x, σ]}; then
+\[
+\delta n(x,t)=\sum_\sigma(\rho_1-\rho_0)(x,\sigma,t),\qquad\Delta Q(t)=\sum_x\delta n(x,t).
+\]
+Since both states share the bulk columns and all columns evolve with the same $U(t)$, $G_1-G_0=|\psi_f\rangle\langle\psi_f|-|C\psi_f\rangle\langle C\psi_f|$ at every time. The single-mode values $\langle\psi_f|\tau_z|\psi_f\rangle$ and $|u|^2-|v|^2$ of column $2N$ (what Julia evolves) are recorded as a check, together with $W=|\psi_f(x,t)|^2$.
+
+\emph{End of ramp.} Column $2N$ is projected on the instantaneous pair of $H(T)$ (first positive eigenvalue and the one below): leakage $=1-p_+-p_-$. If it ends in the $-E$ member, $|0\rangle$ and $|1\rangle$ swap and the sign of $\Delta Q$ flips (\code{sgn}).
+
+Returns \code{T, dt, E0, leak, p\_wrong, dQ\_final, dQ\_adiabatic} ($\Delta Q$ of the $+E$ eigenvector at $T$), \code{times, dQ\_t, dn\_t, charge\_density\_t, W\_t, dQ\_t\_single, dn\_t\_single}.
+\end{function}
+
+\paragraph{§7 cell: two Rashba signs.} The ramp is run with \code{ramp\_params = dict(ell\_final=4, rot\_T=100.0, step\_T=0.1)} ($T=390$) for $\alpha=+0.9$ (``paper'', this notebook's sign) and $\alpha=-0.9$ (``julia'', the model of \nb{msh\_chain\_tn}). Static quantities do not depend on the sign, but the dynamics do; only the $\alpha=-0.9$ run is expected to match Julia, and only it is plotted.
+
+\begin{table}[H]
+\centering\small
+\begin{tabular}{lcc}
+\toprule
+ & $\alpha=+0.9$ (paper) & $\alpha=-0.9$ (julia)\\
+\midrule
+$E(0)$ & 1.2e-14 & 1.2e-14\\
+leakage & 2.179e-04 & 2.143e-04\\
+wrong branch & 1.1e-27 & 1.1e-26\\
+$\Delta Q(T)$ & +0.523281 & +0.516615\\
+adiabatic $\Delta Q(T)$ & +0.519062 & +0.519062\\
+$\max_t|\Delta Q-\langle\psi_f|\tau_z|\psi_f\rangle|$ & 2.8e-14 & 2.0e-14\\
+$\max|\delta n-(|u|^2-|v|^2)|$ & 1.5e-14 & 1.2e-14\\
+\midrule
+$\max_t|\Delta Q_{\rm paper}(t)-\Delta Q_{\rm julia}(t)|$ & \multicolumn{2}{c}{2.4e-02}\\
+\bottomrule
+\end{tabular}
+\end{table}
+The $\alpha=-0.9$ numbers equal the Julia exact values (leak $2.143\times10^{-4}$, $\Delta Q(T)=+0.516615$). Saved: \code{ramp\_\{paper,julia\}\_\{times, dQ\_t, dn\_t, leak, p\_wrong, dQ\_final, dQ\_adiabatic\}}.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\linewidth]{py_ramp.png}
+\caption{Python §7, $\alpha=-0.9$: rotation profile, $|\psi_f(x,t)|^2$ (column $2N$, log scale, dashed wall centres), $\delta n(x,t)$ from the masks, and $\Delta Q(t)$. Compare Fig.~\ref{fig:tn-ramp}.}
+\end{figure}
+
+\section{Interactive views and saving (Python §7b, last cell)}
+
+\begin{function}{plot\_spins(l=0)}
+\code{@interact} slider over \code{ts = np.linspace(0, T, 201)} ($N=64$, \code{ramp\_params}). Draws the spin texture at \code{ts[l]} as arrows ($S_x,S_y$ components, colour from $(1+\mathbf S)/2$), prints the 12 eigenvalues around zero, and shows the particle and particle + hole LDOS ($\eta=10^{-2}$, $\omega\in[-2,2]$) of \code{msh\_ham}.
+\end{function}
+
+\begin{function}{plot\_zero\_energy\_ldos(l=0)}
+Slider as above; plots the particle and particle + hole LDOS at $\omega=0$ ($\eta=10^{-2}$) vs site at \code{ts[l]}.
+\end{function}
+
+\paragraph{Save cell.} \code{np.savez("msh\_compare\_python.npz", ...)} writes every entry of \code{results}. The file contains 42 arrays, the keys listed in the sections above (output: ``saved 42 arrays'').
+
+%======================================================================
+\clearpage
+\part{Comparison notebook \texorpdfstring{\nb{msh\_chain\_compare.ipynb}}{msh\_chain\_compare.ipynb}}
+
+\section{Method}
+
+The notebook loads \code{tn = np.load("msh\_chain\_tn\_results.npz")} and \code{py = np.load("msh\_compare\_python.npz")} and compares them row by row. It runs in seconds.
+
+\begin{function}{check(section, name, a, b, tol)}
+\begin{Verbatim}
+d = float(np.max(np.abs(np.asarray(a) - np.asarray(b))))
+rows.append((section, name, d, tol))
+print(f"{name:<58s} {d:9.1e}  (tol {tol:.0e})  {'✓' if d <= tol else '✗'}")
+\end{Verbatim}
+Computes $d=\max|a_{\rm Julia}-b_{\rm Python}|$, stores it in \code{rows} with its category, and prints ✓ if $d\le$ \code{tol}. \code{section} is \code{"dense"} or \code{"tn"}.
+\end{function}
+
+\paragraph{Tolerance classes.} The notebook states the rule: dense-against-dense rows (spectra, Lorentzian LDOS, exact KPM, exact $\Delta Q$ and $\delta n$, exact ramp) should agree to round-off and use $10^{-9}$; the finite-difference $-\partial E_f/\partial\mu$ uses $10^{-8}$. Tensor-network-against-dense rows (\code{get\_ldos\_spatial}, DMRG Majoranas, MPS $\Delta Q$, TDVP) agree to the truncation error of the method and use $10^{-4}$ (LDOS, Majorana centres, TDVP $\Delta Q$ and $\delta n$) or $10^{-6}$ (Majorana profiles, MPS $\Delta Q(\ell)$, TDVP leakage); $E_f$ of the DMRG Majoranas is held to $10^{-9}$. Only basis-independent quantities are compared, and the ramp rows use the Python run with $\alpha=-0.9$ (\code{ramp\_julia\_*}). The arrays \code{charge\_ells} and the ramp times are asserted equal before comparison.
+
+\paragraph{Tensor-network tolerances, row by row.} The summary markdown of the notebook (§6) sets each tensor-network tolerance against the error
+source of that method, at the size it would have in an acceptable but unconverged run:
+\begin{center}\small
+\begin{tabular}{@{}p{3.1cm}lp{8.2cm}l@{}}
+\toprule
+Row & Tol. & Error source and scale & This run\\
+\midrule
+\code{get\_ldos\_spatial} & $10^{-4}$ & MPO Chebyshev recursion truncated at each of 1024 steps (\code{maxdim = 512}, \code{cutoff = 1e-12}); grows with the entanglement of $H$ (largest at $t=T$). $10^{-4}\approx2\times10^{-5}$ of the LDOS peak ($\approx4.9$). & $3.4\times10^{-6}$--$3.4\times10^{-5}$\\
+Majorana centres & $10^{-4}$ & $\langle x\rangle$ is linear in the DMRG weight error $\varepsilon$ with lever arm up to 64 sites; $10^{-4}$ site $\leftrightarrow\varepsilon\sim10^{-6}$. & $2\times10^{-9}$, $1.3\times10^{-8}$\\
+$|\gamma|^2$ profiles & $10^{-6}$ & DMRG on $K$ leaves a bulk admixture of amplitude $10^{-7}$--$10^{-6}$ (§8); weights err at most by that order. & $3\times10^{-10}$, $4\times10^{-9}$\\
+$E_f$ & $10^{-9}$ & Quadratic in the state error ($\lesssim10^{-12}$ for a $10^{-6}$ error); the dense tolerance. & $2\times10^{-15}$, $3.5\times10^{-15}$\\
+MPS $\Delta Q(\ell)$ & $10^{-6}$ & Linear in the bulk admixture; DMRG without refinement is off by up to $1.5\times10^{-6}$, so this asks for the refined accuracy. & $2.3\times10^{-8}$\\
+TDVP $\Delta Q$, $\delta n$ & $10^{-4}$ & Same midpoint propagator on both sides, so the time-step error cancels; remaining TDVP projection/Krylov error (tol $10^{-12}$, 3900 steps, \code{maxdim = 64}) and the DMRG error of $\psi_f(0)$, against $|\Delta Q|\le0.52$, $|\delta n|\le0.15$. & $4.1\times10^{-7}$, $2.6\times10^{-7}$\\
+TDVP leakage & $10^{-6}$ & The leakage is $2.1\times10^{-4}$; this asks for it to better than 0.5\,\%. & $2.9\times10^{-9}$\\
+\bottomrule
+\end{tabular}
+\end{center}
+The summary cell also prints the row closest to its tolerance in each class.
+
+\section{What each block compares}
+
+\begin{enumerate}
+\item \textbf{Spectrum and Lorentzian LDOS} (Julia §5–6 / Python §2–3): $|E|_1,|E|_3$ of the $f$ sweep; particle and hole LDOS ($\eta=0.03$) of the four snapshots, stacked horizontally.
+\item \textbf{KPM LDOS} (Julia §7a / Python §4): \code{kpm1024\_exact\_j} vs \code{kpm1024\_ph\_j} tests the KPM formula and normalization; \code{kpm1024\_tb\_j} vs \code{kpm1024\_ph\_j} tests the tensor-network arithmetic of \code{get\_ldos\_spatial}.
+\item \textbf{Majorana modes} (Julia §8a DMRG / Python §5 Takagi): centres, $|\gamma_{1,2}(n)|^2$ profiles (p + h, $\uparrow+\downarrow$), $E_f$, for $f=0$ and the domain texture.
+\item \textbf{Charge difference} (Julia §9a / Python §6): Julia \code{exact\_pair\_charge} against Python single-mode and many-body $\Delta Q$; $-\partial E_f/\partial\mu$ (both $d\mu=10^{-4}$); $E_f(\ell)$; $\delta n(x)$ for every $\ell$; and Julia's final MPS value (refined where $E_f<2\times10^{-6}$) against Python.
+\item \textbf{Spin ramp} (Julia §10a / Python §7): $\ell_{\rm final}=4$, $T=390$, 201 samples. Julia's dense evolution against Python (round-off), and TDVP against Python (truncation).
+\end{enumerate}
+
+\section{Results}
+
+All 32 comparisons are within tolerance (printed: ``32 of 32 comparisons within tolerance''). Closest to tolerance: among the dense rows the
+Lorentzian LDOS at $t=2T/3$ ($1.2\times10^{-11}$, $1.2\times10^{-2}$ of its tolerance), among the tensor-network rows \code{get\_ldos\_spatial} at
+$t=T$ ($3.4\times10^{-5}$, $0.34$ of its tolerance).
+
+\begin{longtable}{>{\raggedright}p{7.6cm}lll}
+\caption{Comparison rows as printed by \nb{msh\_chain\_compare.ipynb}: $d=\max|\text{Julia}-\text{Python}|$.}\\
+\toprule
+Row & Class & $d$ & tol \\
+\midrule
+\endfirsthead
+\toprule
+Row & Class & $d$ & tol \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+f sweep $|E|_1,|E|_3$ & dense & 2.8e-14 & 1e-09\\
+Lorentzian LDOS particle, hole: $t=0$ & dense & 8.7e-13 & 1e-09\\
+Lorentzian LDOS particle, hole: $t=T/3$ & dense & 7.5e-12 & 1e-09\\
+Lorentzian LDOS particle, hole: $t=2T/3$ & dense & 1.2e-11 & 1e-09\\
+Lorentzian LDOS particle, hole: $t=T$ & dense & 3.8e-12 & 1e-09\\
+\midrule
+kpm\_exact (Julia) vs Python, p+h: $t=0$ & dense & 3.8e-13 & 1e-09\\
+kpm\_exact (Julia) vs Python, p+h: $t=T/3$ & dense & 3.4e-12 & 1e-09\\
+kpm\_exact (Julia) vs Python, p+h: $t=2T/3$ & dense & 9.0e-12 & 1e-09\\
+kpm\_exact (Julia) vs Python, p+h: $t=T$ & dense & 1.8e-12 & 1e-09\\
+get\_ldos\_spatial, $N_{\rm cheb}=1024$, p+h: $t=0$ & tn & 5.3e-06 & 1e-04\\
+get\_ldos\_spatial, $N_{\rm cheb}=1024$, p+h: $t=T/3$ & tn & 3.8e-06 & 1e-04\\
+get\_ldos\_spatial, $N_{\rm cheb}=1024$, p+h: $t=2T/3$ & tn & 3.6e-06 & 1e-04\\
+get\_ldos\_spatial, $N_{\rm cheb}=1024$, p+h: $t=T$ & tn & 3.4e-05 & 1e-04\\
+\midrule
+Majorana centres: $f=0$ & tn & 2.0e-09 & 1e-04\\
+$|\gamma_1|^2,|\gamma_2|^2$ profiles: $f=0$ & tn & 3.3e-10 & 1e-06\\
+$E_f$: $f=0$ & tn & 2.0e-15 & 1e-09\\
+Majorana centres: domain & tn & 1.3e-08 & 1e-04\\
+$|\gamma_1|^2,|\gamma_2|^2$ profiles: domain & tn & 3.7e-09 & 1e-06\\
+$E_f$: domain & tn & 3.5e-15 & 1e-09\\
+\midrule
+exact $\Delta Q(\ell)$: Julia vs Python single mode & dense & 2.4e-14 & 1e-09\\
+exact $\Delta Q(\ell)$: Julia vs Python many-body (masks) & dense & 2.7e-14 & 1e-09\\
+$-\partial E_f/\partial\mu$ (finite difference) & dense & 4.7e-11 & 1e-08\\
+$E_f(\ell)$ & dense & 1.1e-14 & 1e-09\\
+exact $\delta n(x)$ for every $\ell$ & dense & 7.1e-15 & 1e-09\\
+MPS $\Delta Q(\ell)$ & tn & 2.3e-08 & 1e-06\\
+\midrule
+exact $\Delta Q(t)$ & dense & 3.7e-14 & 1e-09\\
+exact $\delta n(x,t)$ & dense & 2.0e-14 & 1e-09\\
+exact leakage & dense & 1.0e-14 & 1e-09\\
+adiabatic $\Delta Q$ at $t=T$ & dense & 1.3e-14 & 1e-09\\
+MPS / TDVP $\Delta Q(t)$ & tn & 4.1e-07 & 1e-04\\
+MPS / TDVP $\delta n(x,t)$ & tn & 2.6e-07 & 1e-04\\
+MPS / TDVP leakage & tn & 2.9e-09 & 1e-06\\
+\end{longtable}
+
+The dense rows agree at $10^{-15}$–$10^{-11}$; the largest dense difference is the finite-difference $-\partial E_f/\partial\mu$ ($4.7\times10^{-11}$). The tensor-network rows sit two orders of magnitude or more below their tolerances, except \code{get\_ldos\_spatial} at $t=T$ ($3.4\times10^{-5}$ against $10^{-4}$).
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{cmp_dQ.png}
+\caption{Compare §4. Left: $|\Delta Q|$ vs $\ell$, Python exact and Julia MPS. Right: $|\Delta Q_{\rm Julia}-\Delta Q_{\rm Python}|$ for the MPS value with and without refinement and for Julia's exact value (round-off, $\lesssim10^{-13}$).}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{cmp_ramp.png}
+\caption{Compare §5. Left: $\Delta Q(t)$ from Julia TDVP, Julia exact evolution, Python (masks), and the adiabatic value. Right: differences from Python: TDVP up to $4.1\times10^{-7}$, Julia exact up to $3.7\times10^{-14}$.}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.72\linewidth]{cmp_summary.png}
+\caption{Compare §6 summary: $\max|\text{Julia}-\text{Python}|$ per row (blue: dense against dense; orange: tensor network against dense), with each row's tolerance (black tick).}
+\end{figure}
+
+%======================================================================
+\section{TensorBinding routines used (from the v0.2.0 source)}
+\label{sec:tb}
+The notebooks call several TensorBinding routines whose code they do not show. Their behaviour, read from the installed package source
+(TensorBinding 0.2.0), is:
+\begin{description}
+\item[\code{build\_K(H, sites, ω, η; maxdim\_K=200, cutoff\_K=1e-8)}] (\code{solvers/DMRG.jl}) returns $K=(H-\omega)^2+\eta^2$: the MPO sum
+  $H-\omega\mathbb 1$ (cutoff \code{cutoff\_K}), its square by \code{apply} (cutoff \code{cutoff\_K}, bond dimension \code{maxdim\_K}), and the sum
+  with $\eta^2\mathbb 1$, again truncated at \code{cutoff\_K}. That last truncation is why the default $10^{-8}$ drops part of the $\eta^2$ term and
+  the notebook passes $10^{-14}$ (§8).
+\item[\code{shift\_pair\_mpos(sites, q; cyclic=false)}] (\code{core/Utils.jl}) returns $(K,K^\dagger)$ with $K$ the binary adder
+  $|n\rangle\to|n+q\rangle$ on the position qubits (first site most significant), a carry MPO of bond dimension 2. With \code{cyclic = false} the states
+  with $n+q\ge2^L$ are mapped to zero, so no bond joins the chain ends; this is the open-boundary Rashba term of \code{msh\_chain} (§3).
+\item[\code{prepend\_spin}, \code{prepend\_nambu}] (\code{core/AuxDOF.jl}, \code{core/Utils.jl}) both call \code{prepend\_op(H, s, op)}: a new
+  first site $s$ carrying the $2\times2$ matrix \code{op}, joined to the first tensor of $H$ by a bond of dimension 1, i.e.\ the MPO of
+  $\mathrm{op}\otimes H$. Symbols are looked up in fixed tables (spin: \code{:iSy} $=i\sigma_y$, \code{:Sx}
+  $=\sigma_x/2$, \dots; Nambu: \code{:Pp} $=|p\rangle\langle p|$, \code{:Ph} $=|h\rangle\langle h|$, \code{:tp} $=|p\rangle\langle h|$, \code{:tm} $=|h\rangle\langle p|$); a matrix is
+  used as given (the notebooks pass $\sigma_{x,y,z}$ and $-\sigma^*$).
+\item[\code{\_kpm\_kernel}, \code{\_kpm\_weight\_matrix(Ncheb, ω̃; kernel=:jackson)}] (\code{solvers/kpm/kernels.jl}) return the unnormalized
+  kernel $N g_n$ of the Python \code{jackson} (the Jackson kernel for $N-1$ moments, see that entry) and $W_{n\tilde\omega}=c_nNg_nT_{n}(\tilde\omega)$,
+  zero for $|\tilde\omega|\ge1$.
+\item[\code{get\_ldos\_spatial(H, Ncheb, ω; mode=:mpo, …)}] (\code{solvers/kpm/ldos.jl}) runs the Chebyshev recursion
+  $T_{n+1}=2\tilde HT_n-T_{n-1}$ on MPOs, $\tilde H=(H-\text{center})/\text{scale}$, keeping three MPOs at a time and truncating each step at
+  \code{maxdim}/\code{cutoff}. \code{msh\_tb} sets \code{scale} and \code{center}, so no DMRG estimate of the bounds is run. At each order $T_n$ is
+  projected on the selected Nambu and spin sectors (with the selectors at \code{nothing}, all sectors are summed) and its diagonal is read at every
+  position with position-basis MPS, giving the moments $\mu_n(x)$; the LDOS is $A=W^T\mu/(\pi^2N\sqrt{1-\tilde\omega^2})$ in package units.
+  \code{kpm\_exact} applies exactly this formula to the exact eigenpairs, and the two agree to $3.4\times10^{-5}$ (compare notebook).
+\item[\code{evolve\_with\_tdvp\_timedep(Hoft, ψ0, nsteps, dt; …)}] (\code{solvers/Timeev.jl}) for step $k$ evaluates $H$ once at
+  $t_{\rm mid}=(k-1)dt+dt/2$ and makes one \code{ITensorMPS.tdvp} call with $-iH(t_{\rm mid})$ over $dt$ (two-site, \code{maxdim}, \code{cutoff},
+  normalization after each step, \code{reverse\_step}, Krylov exponentiation with \code{tol}, \code{krylovdim}). It returns all $n_{\rm steps}+1$
+  states. This is the ``midpoint rule'' of the \code{run\_spin\_ramp} docstring; \code{run\_spin\_ramp\_exact} uses the same frozen-midpoint
+  propagator with the dense matrix exponential, which is why the time-step error cancels in the comparison.
+\end{description}
+
+\end{document}

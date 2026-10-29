@@ -1,0 +1,555 @@
+%======================================================================
+\section{Part I --- Tensor-network notebook (\code{msh\_tjunctions\_tn.ipynb})}
+%======================================================================
+
+Every reported quantity in this notebook comes from MPO/MPS methods: DMRG for the subgap states and the Majoranas, TDVP for the
+gates and the fusion readout. Dense matrices appear only in section 4, to check that the MPO equals the lattice Hamiltonian.
+Packages: \code{ITensors}, \code{ITensorMPS}, \code{TensorBinding} (alias \code{TB}), \code{Plots}, \code{Serialization}.
+
+\subsection{Setup (cell 1)}
+
+Global constants: \code{ROOT = pwd()} (all files are read and written in the notebook's folder); \code{RUN\_TDVP = false} (set to
+\code{true} to rerun the TDVP of section 6 even when the cache exists); the Pauli matrices \code{σ0, σx, σy, σz}.
+
+\begin{function}{quiet(f)}
+\begin{Verbatim}
+quiet(f) = with_logger(f, ConsoleLogger(stderr, Logging.Error))
+\end{Verbatim}
+Runs the closure \code{f} with a logger that shows errors only. KrylovKit warns at every non-converged local solve in DMRG on $K$ and in
+\code{linsolve}; the notebook comment calls these warnings harmless. Used around \code{zero\_mode\_subspace} and \code{refine\_subspace}.
+\end{function}
+
+%----------------------------------------------------------------------
+\subsection{Section 1: Hamiltonian, MPO and dense reference}
+
+\begin{function}{diag\_mpo\_exact(v, pos; cutoff=1e-14)}
+\begin{Verbatim}
+function diag_mpo_exact(v::AbstractVector, pos; cutoff=1e-14)
+    A = permutedims(reshape(ComplexF64.(v), ntuple(_ -> 2, L)), L:-1:1)
+    ψ = MPS(A, pos; cutoff=cutoff)
+    ...  δ[s => j, s' => j, s'' => j] = 1
+    W[k] = replaceprime(ψ[k] * δ, 2 => 0; tags=tags(s))
+\end{Verbatim}
+Builds the exact MPO of the diagonal operator $\sum_n v_n\ket n\bra n$ on the $L$ position qubits (pos$_1$ = most significant bit).
+\emph{Method:} the length-$2^L$ vector is reshaped into an $L$-index tensor (the \code{permutedims} puts the most significant bit first),
+compressed into an MPS by TT-SVD with \code{cutoff = 1e-14}, and each MPS tensor is contracted with a three-leg Kronecker delta
+$\delta_{s s' s''}$ so that the physical index becomes a diagonal operator index pair. The result is exact up to the cutoff.
+\emph{Used in:} the site-dependent exchange field (\code{msh\_tjunction\_array}, \code{array\_exchange\_mpo}) and the position operator
+(\code{array\_position\_mpo}).
+\end{function}
+
+\begin{function}{dense(mpo, sites)}
+Contracts the whole MPO (\code{prod}) and reshapes it into a $D\times D$ matrix, big-endian over \code{sites} (first site most
+significant). Only used for the checks of section 4 and the \code{tb\_reference/} export.
+\end{function}
+
+\begin{function}{hop\_matrix(t, α, d)}
+\begin{Verbatim}
+hop_matrix(t, α, d) = -t * σ0 + im * α * (d[1] * σy - d[2] * σx)
+\end{Verbatim}
+The $2\times2$ spin matrix of the hopping $c^\dagger_{\mathbf r+\hat d}\,h\,c_{\mathbf r}$ along the unit bond $\hat d = (d_x, d_y)$:
+$h = -t + i\alpha(d_x\sigma_y - d_y\sigma_x)$. The reverse bond has $h(-\hat d) = h(\hat d)^\dagger$.
+\end{function}
+
+\begin{function}{struct TArray; Ncell, center\_x, array\_pos, array\_spin, ARM\_ANG, ARM\_ORIG}
+\begin{Verbatim}
+Base.@kwdef struct TArray
+    L::Int = 4          # 2^L = 16 sites per arm
+    ncell::Int = 3
+end
+Ncell(a::TArray) = 2^a.L
+center_x(a::TArray, c) = (c - (a.ncell + 1) / 2) * 2Ncell(a)
+array_pos(a, c, s, n) = (center_x(a, c), 0.0) .+ ARM_ORIG[s] .+ n .* (cos(ARM_ANG[s]), sin(ARM_ANG[s]))
+\end{Verbatim}
+\code{TArray} holds the geometry: $L$ position qubits ($2^L$ sites per arm) and the number of cells. \code{Ncell} returns $2^L$ (sites per
+arm, despite the name). \code{center\_x} gives the junction coordinate $x_c = (c - (n_{\rm cell}+1)/2)\cdot 2^{L+1}$, i.e.\ $-32, 0, 32$ for
+$L = 4$. \code{array\_pos} returns $\mathbf r(c,s,n)$ with \code{ARM\_ANG = (0, π, π/2)} and \code{ARM\_ORIG = ((0,0), (-1,0), (0,1))}.
+\code{array\_spin(a, f)} returns a closure $(c,s,n)\mapsto\mathbf S$ with $\theta = (-1)^{x+y}(\pi/2)f(c,s,n)$ and
+$\phi = \theta_{\rm arm} + \pi/2$, using the rounded integer coordinates for the sign.
+\end{function}
+
+\begin{function}{msh\_tjunction\_array(a, f; t, μ, α, Δ, J, cutoff=1e-13, sites=nothing)}
+\begin{Verbatim}
+function msh_tjunction_array(a::TArray, f; t=1.0, μ=-7.0, α=0.9, Δ=2.4, J=5.8, cutoff=1e-13, sites=nothing)
+    ...
+    return HB, [ns; ss; cl; pos; arm]
+end
+\end{Verbatim}
+Builds the BdG Hamiltonian of the array with texture \code{f} as an MPO and returns it with the site list
+\code{[nambu; spin; cell; pos₁…pos₄; arm]}. If \code{sites} is given, the existing indices are reused, so MPS built on one Hamiltonian
+can be used with another (needed for $H(t)$).
+
+\emph{Construction.} A helper \code{term(Mpos, σmat, Bcell, Barm)} takes an MPO on the position qubits and attaches an operator on the
+arm (\code{TB.postpend\_op}), the cell and the spin (\code{TB.prepend\_op}). \code{P(d,i)} is the projector $\ket i\bra i$ and
+\code{E(d,i,j)} $= \ket i\bra j$. The normal part $H_0$ is the sum of
+\begin{enumerate}
+\item the chemical potential $-\mu\cdot\mathbb 1$;
+\item intra-arm hopping for each arm $s$: $K_+\otimes h(\hat e_s)\otimes\mathbb1_{\rm cell}\otimes P_s$ and
+  $K_-\otimes h(\hat e_s)^\dagger\otimes\mathbb1\otimes P_s$, where $(K_+, K_-)$ = \code{TB.shift\_pair\_mpos(pos, 1; cyclic=false)} are the
+  binary shift $\ket n\to\ket{n+1}$ and its adjoint;
+\item junction bonds through the site-0 projector \code{P0 = TB.\_site\_projector\_mpo(L, pos, 0)}, with arm operators $\ket b\bra a$ for the
+  four directed bonds $(a\to b, \hat d)$: $(2\to1, +\hat x)$, $(1\to2, -\hat x)$, $(3\to1, -\hat y)$, $(1\to3, +\hat y)$. These connect the
+  junction site (arm 1, $n=0$) with its left neighbour (arm 2, $n=0$) and with the first site of the vertical leg (arm 3, $n=0$);
+\item inter-cell bonds through the site-15 projector \code{Pend}, with cell operator $\ket{c+1}\bra c$ and arm operator $\ket2\bra1$
+  (right end of cell $c$ to the far end of cell $c+1$'s left arm) and the Hermitian conjugate;
+\item the exchange $J\,\mathbf S\cdot\boldsymbol\sigma$: for each cell, arm and component $k$ the vector $v_n = JS_k(c,s,n)$ becomes a
+  diagonal MPO (\code{diag\_mpo\_exact}), with $\sigma_k$ on spin and projectors on cell and arm; zero components are skipped.
+\end{enumerate}
+The terms are summed with \code{cutoff = 1e-13}. The BdG MPO is then
+\[
+H_B = \tau_{pp}\otimes H_0 + \tau_{hh}\otimes(-H_0^*) + \tau_+\otimes(\Delta\,i\sigma_y) + \tau_-\otimes(\Delta\,i\sigma_y)^\dagger,
+\]
+using \code{TB.prepend\_nambu} with \code{:Pp}, \code{:Ph}, \code{:tp} ($\ket p\bra h$), \code{:tm} ($\ket h\bra p$); $-H_0^*$ is
+\code{-1.0 * dag(H0)} and the pairing is \code{ComplexF64[0 1; -1 0]} $= i\sigma_y$. The resulting MPO has $\chi = 18$.
+\emph{Used in:} section 4 (\code{HB}), as the $J=0$ base of \code{MovingArrayH}, and in \code{bench\_tdvp}.
+\end{function}
+
+\begin{function}{array\_reference(a, f; t, μ, α, Δ, J)}
+Independent dense BdG matrix ($576\times576$) built only from site coordinates, in the same basis as \code{dense(HB, sites)}. The index of
+site $(c,s,n)$ is \code{idx = (c-1)*3N + 3n + s} (cell $\otimes$ pos $\otimes$ arm, arm fastest); spin blocks are \code{[i, M+i]}. On-site blocks
+$-\mu + J\mathbf S\cdot\boldsymbol\sigma$; for every ordered pair of sites exactly one lattice spacing apart (\code{hypot(d) ≈ 1}),
+$H_0[\mathbf r+\hat d,\mathbf r] \mathrel{+}= h(\hat d)$. This brute-force double loop does not use the arm/junction/cell logic of the MPO,
+which makes it an independent check. Pairing block $\Delta\,i\sigma_y\otimes\mathbb1_M$; result $\begin{psmallmatrix}H_0 & D\\ D^\dagger & -H_0^*\end{psmallmatrix}$.
+\end{function}
+
+\begin{function}{array\_exchange\_mpo(a, sites, f, cells; J=5.8, cutoff=1e-14)}
+The exchange of the listed \code{cells} only, as a BdG MPO on \code{sites}: particle part $\tau_{pp}\otimes\sigma_k$, hole part
+$\tau_{hh}\otimes(-\sigma_k^*)$, each times the diagonal MPO of $JS_k$ and cell/arm projectors. Returns \code{nothing} if all components
+vanish. This is what makes $H(t)$ cheap: only the exchange of moving cells is rebuilt at each time (\code{MovingArrayH}).
+\end{function}
+
+\begin{function}{array\_position\_mpo(a, sites; β=0.05)}
+Diagonal position operator $\hat X = \sum_{\mathbf r} (\mathbf r\cdot\hat u)\ket{\mathbf r}\bra{\mathbf r}\otimes\mathbb1_{\rm spin}\otimes\mathbb1_{\rm nambu}$
+with $\hat u = (\cos\beta, \sin\beta)$, $\beta = 0.05$. Built per cell and arm from \code{diag\_mpo\_exact}. Used by \code{localize\_majoranas};
+the eigenvalues it produces are the ``centres $\mathbf r\cdot\hat u$'' printed in section 5.
+\end{function}
+
+\begin{function}{site\_list(a)}
+All sites as $(c, s, n)$, ordered cell, then $n$, then arm. This is the row order of the LDOS CSV and of \code{coords.txt}.
+\end{function}
+
+%----------------------------------------------------------------------
+\subsection{Section 2: protocols for \texorpdfstring{$\sqrt Z$, $\sqrt X$}{√Z, √X} and the partial fusion}
+
+All protocols are textures $f(c,s,n;t)$ built from
+\[
+\mathrm{ss}(\tau) = \begin{cases}0 & \tau\le0\\ \sin^2(\pi\tau/2) & 0<\tau<1\\ 1 & \tau\ge1\end{cases}
+\qquad(\code{smoothstep}),
+\]
+with $\tau = t/T_{\rm rot}$ and a site-dependent delay \code{step\_T}$\cdot d$: each site turns from topological to trivial (or back) over one
+\code{rot\_T}, starting at a delay that depends on its position, so the topological/trivial domain wall moves along the leg. The
+ramps were written for legs of $L_1 = L_2 = 14$ sites (a 1D index $i$ along the horizontal segment and $k$ along the vertical leg) and are
+mapped onto the 16-site legs of the array.
+
+\begin{function}{smoothstep(τ), f0}
+\code{smoothstep} as above. \code{f0(c,s,n)} $=1$ if $c=2$ or $s=3$, else $0$: the initial setup with four MZMs.
+\end{function}
+
+\begin{function}{struct Exchange12; duration(p::Exchange12)}
+\begin{Verbatim}
+Base.@kwdef struct Exchange12
+    L1::Int = 14; L2::Int = 14; rot_T::Float64 = 200.0; step_T::Float64 = 0.1
+end
+duration(p::Exchange12) = (p.step_T * (4p.L1 + 2p.L2 + 8) + 1) * p.rot_T
+\end{Verbatim}
+Parameters of \code{exchange\_12} (\code{rot\_Tz = 200}, \code{step\_Tz = 0.1}). Duration of one exchange
+$T_{12} = (0.1\cdot92 + 1)\cdot200 = 2040$; the Z gate is two exchanges, $T_{\rm gate} = 4080$.
+\end{function}
+
+\begin{function}{f\_horizontal(p, i, t), f\_vertical(p, k, t)}
+\code{f\_horizontal} is the rotation fraction of horizontal site $i$ of the original $L_1$-geometry: $i = 0\dots L_1$ is the left half,
+$i = L_1+1$ the junction (always $0$, topological), $i = L_1+2\dots2L_1+2$ the right half; elsewhere 1. Each half is a difference of two
+delayed smoothsteps, i.e.\ the site becomes trivial at one delay and topological again at a later one. \code{f\_vertical} is
+$1 - \mathrm{ss}(\tau - s(k+L_1+2)) + \mathrm{ss}(\tau - s(L_2 - k + 3L_1 + L_2 + 5))$ for vertical site $k$: the leg becomes topological
+from the junction outward and trivial again from the far end inward. Together they move $\gamma_1$ and $\gamma_2$ around the vertical leg.
+\end{function}
+
+\begin{function}{f\_braid(p, t), f\_array\_braid(a, p, f0, t)}
+\begin{Verbatim}
+f_braid(p::Exchange12, t) = (s, n) -> s == 1 ? f_horizontal(p, p.L1 + 1 + n, t) :
+                                      s == 2 ? f_horizontal(p, max(p.L1 - n, 0), t) :
+                                               f_vertical(p, min(n, p.L2), t)
+\end{Verbatim}
+The map onto the 16-site legs of cell 1: arm 1 $n\to i = L_1+1+n$ (the junction is $n=0$, $i = 15$; $n = 15\to i = 30 = 2L_1+2$);
+arm 2 $n\to i = \max(L_1 - n, 0)$ (the two outermost sites $n = 14, 15$ share $i=0$); arm 3 $n\to k = \min(n, L_2)$ (sites $n = 14, 15$
+share $k = 14$). \code{f\_array\_braid} applies this to cell 1 and \code{f0} elsewhere.
+\end{function}
+
+\begin{function}{struct Exchange23; duration; f\_h23, f\_v23, f\_cell2\_23, f\_array\_23}
+\begin{Verbatim}
+Base.@kwdef struct Exchange23
+    L1::Int = 14; L2::Int = 14; rot_T::Float64 = 100.0; step_T::Float64 = 0.1
+end
+duration(p::Exchange23) = (p.step_T * (p.L1 + 3p.L2 + 2p.L1 + 3) + 1) * p.rot_T
+\end{Verbatim}
+\code{exchange\_23} acts on cell 2 (junction 2, trivial in the initial setup). Duration $(0.1\cdot87+1)\,T_{\rm rot}$: 970 for
+\code{rot\_T = 100} (used in the Hamiltonian check) and 3880 for \code{rot\_T = 400} (used for the X gate, $T_{\rm gate} = 7760$).
+\code{f\_h23(p, i, t)} is defined on junction 2's segment $i = 2L_1+3\dots4L_1+4$ ($31\dots60$) and raises an error elsewhere; each half
+turns topological at one delay and trivial again at a later one, so the segment of cell 2 temporarily connects the two topological
+segments and $\gamma_2,\gamma_3$ are exchanged through it. \code{f\_v23} has the same form as \code{f\_vertical}.
+\code{f\_cell2\_23} maps the 16-site legs: right arm $i = 3L_1+3+n$ ($45\dots60$; junction $i = 45$); left arm
+$i = (3L_1+2) - (L_1-1)\,n/(L_1+1)$, a linear map of the 16 sites onto $i = 44\dots31$ (non-integer $i$ is allowed since \code{smoothstep}
+takes real arguments); vertical $k = \min(n, L_2)$. \code{f\_array\_23} applies it to cell 2 and \code{f0} elsewhere.
+\end{function}
+
+\begin{function}{struct Fusion; duration(q::Fusion); f\_fuse(q, f0, t)}
+\begin{Verbatim}
+Base.@kwdef struct Fusion
+    L1::Int = 14; Lp::Int = 1; rot_T::Float64 = 100.0; step_T::Float64 = 0.2
+end
+duration(q::Fusion) = ((q.L1 - q.Lp + 1) * q.step_T + 1) * q.rot_T
+\end{Verbatim}
+Partial fusion of pair A on cell 1 (\code{rot\_T0 = 100}, \code{step\_T0 = 0.2}, \code{Lp = 1}), duration $T_f = 380$. In
+\code{f\_fuse}: cell 1's vertical leg stays trivial; the sites $n < L_p$ of arm 2 and $n\le L_p$ of arm 1 stay topological (sites
+$x_c-1, x_c, x_c+1$: $2L_p+1 = 3$ sites); every other site of cell 1 ramps to trivial as $\mathrm{ss}(\tau - 0.2(15-n))$, the outer end
+$n = 15$ first. The leg length is hard-coded as \code{N = 16}. Both halves of the segment thus turn trivial from the outer ends inward.
+\end{function}
+
+%----------------------------------------------------------------------
+\subsection{Section 3a: time evolution and readout}
+
+\begin{function}{struct MovingArrayH; MovingArrayH(a, ft, f0, moving; J, sites); (B::MovingArrayH)(t)}
+\begin{Verbatim}
+struct MovingArrayH
+    a::TArray; ft::Function; moving::Vector{Int}; J::Float64
+    H_fixed::MPO; sites::Vector{<:Index}
+end
+(B::MovingArrayH)(t) = +(B.H_fixed, array_exchange_mpo(B.a, B.sites, B.ft(t), B.moving; J=B.J); cutoff=1e-14)
+\end{Verbatim}
+$H(t) = H_{\rm fixed} + H_{\rm ex}^{\rm moving}(t)$. The constructor builds $H_{\rm fixed}$ once: the full MPO at $J = 0$ (chemical
+potential, hopping, Rashba, pairing) plus the exchange of the cells not in \code{moving}, computed with \code{f0}. Calling \code{B(t)}
+adds the exchange of the moving cells for texture \code{ft(t)}. This avoids rebuilding the whole MPO at each time step.
+\end{function}
+
+\begin{function}{τz\_on(ψ), ΔQ\_mps(ψ)}
+\code{τz\_on} applies $\tau_z = \mathrm{diag}(1,-1)$ to the Nambu site (the first MPS tensor) and leaves the rest unchanged.
+\code{ΔQ\_mps(ψ)} $= \mathrm{Re}\bra\psi\tau_z\ket\psi = \sum(|u|^2 - |v|^2)$, the contribution of one mode to $\Delta Q$.
+\end{function}
+
+\begin{function}{site\_uv(ψ, sites, slist), site\_dn(ψ, sites, slist)}
+\begin{Verbatim}
+"Spin-summed particle |u|² and hole |v|² weights of an MPS at the sites `slist = [(c, s, n), …]` (no dense vector)."
+...
+        T = head * (ψ[3] * onehot(cl => c))
+        for k in 1:L
+            T *= ψ[3+k] * onehot(pos[k] => ((n >> (L - k)) & 1) + 1)      # pos[1] = most significant bit
+        end
+        A = Array(T * (ψ[end] * onehot(arm => s)), ns, ss)
+\end{Verbatim}
+Local weights of an MPS at selected sites, without forming the 576-component vector. For each site $(c,s,n)$ the cell, position bits
+and arm indices are fixed with one-hot vectors; the remaining tensor \code{head} $=\psi[1]\psi[2]$ (Nambu $\times$ spin) gives the
+$2\times2$ amplitude array $A_{\tau\sigma}$. Then $|u|^2 = \sum_\sigma|A_{1\sigma}|^2$, $|v|^2 = \sum_\sigma|A_{2\sigma}|^2$.
+\code{site\_dn} returns $|u|^2 - |v|^2$, the contribution of one mode to $\delta n$. \emph{Used in:} the LDOS weights (section 5,
+$|u|^2+|v|^2$) and $\delta n(x,t)$ in \code{evolve\_mode\_tdvp}.
+\end{function}
+
+\begin{function}{mode\_leak(z)}
+\code{mode\_leak(z) = [1 - sum(abs2, z[:, k]) for k in 1:size(z, 2)]} for the $4\times2$ overlap matrix
+$z_{ik} = \langle\gamma_i(0)|\psi_k\rangle$: the leakage $\ell_k$ of each evolved mode out of the initial zero-mode subspace. This presumes
+the $\gamma_i$ orthonormal, which \code{clean\_majoranas} enforces.
+\end{function}
+
+\begin{function}{evolve\_mode\_tdvp(B, ψ0, tsnap; γ0, slist, dt=0.1, log, maxdim=64, cutoff=1e-20, tol=1e-12, krylovdim=30)}
+\begin{Verbatim}
+function evolve_mode_tdvp(B, ψ0, tsnap; γ0, slist, dt=0.1, log=(args...) -> nothing,
+                          maxdim=64, cutoff=1e-20, tol=1e-12, krylovdim=30)
+    ...
+        n = round(Int, (t1 - t0) / dt); h = (t1 - t0) / n
+        ψ = last(TB.evolve_with_tdvp_timedep(t -> B(t0 + t), ψ, n, h; maxdim, cutoff, tol, krylovdim, reverse_step=true))
+        record!(i, ψ)
+\end{Verbatim}
+Evolves one mode $\psi(t)$ with $i\partial_t\psi = H(t)\psi$ from snapshot to snapshot. Between consecutive snapshot times $t_0, t_1$ it takes
+$n = \mathrm{round}((t_1-t_0)/dt)$ steps of length $h = (t_1-t_0)/n$ with \code{TB.evolve\_with\_tdvp\_timedep}: 2-site TDVP in which, on each
+interval $[t, t+h]$, $H$ is frozen at the midpoint $t+h/2$ (a second-order midpoint rule in time), states are normalized each step,
+and \code{reverse\_step = true} (the backward local evolution of the TDVP sweep). Settings: \code{maxdim = 64}, \code{cutoff = 1e-20} (so
+the bond dimension is set by the state, not by truncation; the runs reach $\chi = 24$), Krylov exponentiation with \code{tol = 1e-12},
+\code{krylovdim = 30}.
+
+At every snapshot \code{record!} stores $z_{i} = \langle\gamma_i(0)|\psi\rangle$ for the four initial Majoranas, \code{ΔQ\_mps(ψ)},
+\code{site\_dn} on \code{slist} and \code{maxlinkdim(ψ)}; then \code{log(i, nt, t, χ, ΔQ)} is called.
+\emph{Returns} \code{(; ts, z, dQ, dn, χ, ψT)}; \code{ψT} is the final MPS.
+\end{function}
+
+%----------------------------------------------------------------------
+\subsection{Section 3b: zero modes from DMRG, refinement and localization}
+
+The zero modes cannot be found by plain DMRG on $H$ (they are in the middle of the spectrum). The notebook minimises
+$K = H^2 + \eta^2$, whose lowest states are the $|E|$-smallest states of $H$.
+
+\begin{function}{norm\_Hψ(H, ψ)}
+$\|H\psi\|$ by exact MPO--MPS application (\code{alg="naive"}, \code{truncate=false}); the residual used to judge the zero modes.
+\end{function}
+
+\begin{function}{zero\_mode\_subspace(HB, sites; nzero=2, η=1e-2, seed=1234, nsweeps=20, maxdim=[10,20,50,100,200], cutoff=1e-14, cutoff\_K=1e-14, noise=[1e-6,1e-7,1e-8,0], weight=10, eigsolve\_krylovdim=20, eigsolve\_maxiter=3)}
+\begin{Verbatim}
+    K = TB.build_K(HB, sites, 0.0, η; cutoff_K)        # TB's default cutoff_K = 1e-8 would drop η²
+    for k in 1:nzero+1
+        ψ0 = random_mps(sites; linkdims=10)
+        _, ψ = isempty(ψs) ? dmrg(K, ψ0; ...) : dmrg(K, ψs, ψ0; weight, ...)
+\end{Verbatim}
+Finds \code{nzero} states of smallest $|E|$ plus one extra state. \emph{Method:} \code{TB.build\_K(H, sites, ω=0, η)} builds
+$K = (H-\omega)^2 + \eta^2$ as an MPO (product of MPOs, truncated at \code{cutoff\_K}). The cutoff is set to $10^{-14}$ because, per the
+comment, TensorBinding's default $10^{-8}$ would drop $\eta^2 = 10^{-4}$. DMRG then finds the ground state of $K$ and, one at a time, the
+next states with a penalty \code{weight}$\,\sum_j\ket{\psi_j}\bra{\psi_j}$ on the states already found (ITensorMPS excited-state DMRG). The
+bond dimension grows along \code{maxdim}; \code{noise} helps the early sweeps. \code{eigsolve\_krylovdim = 20} is needed: the markdown
+states that the default stalls at $\|H\psi\|\approx0.2$.
+
+The last state is removed and used only as a gap check: its $\|H\psi\|$ is the edge of the window (0.268 in section 5).
+\emph{Returns} \code{(ψs, [‖Hψ‖ for each], ‖Hψ\_gap‖)}.
+\end{function}
+
+\begin{function}{refine\_subspace(HB, ψs; σ=1e-3, nsweeps=6, cutoff=1e-20, maxdim=200, krylovdim=30)}
+\begin{Verbatim}
+refine_subspace(HB, ψs; σ=1e-3, ...) =
+    [(x = ITensorMPS.linsolve(HB, ψ, ψ, -σ, 1.0; nsweeps, cutoff, maxdim,
+                              updater_kwargs=(; krylovdim, verbosity=0)); x / norm(x)) for ψ in ψs]
+\end{Verbatim}
+One inverse-iteration step for each state: solves $(H - \sigma)\,x = \psi$ by DMRG-like sweeps (\code{linsolve} with $a_0 = -\sigma$,
+$a_1 = 1$) and normalizes. Components with $|E|\ll$ gap are amplified by $\sim|E_{\rm bulk}/\sigma|$ relative to bulk admixtures, which the
+markdown identifies as what $\Delta Q$ is sensitive to. The comment records the trade-off for \code{krylovdim}: the local GMRES solves rarely
+converge at 30; at 60 they do ($\|H\psi\|$ $2\times10^{-5}\to3\times10^{-8}$) but the step is about 2.5 times slower.
+\end{function}
+
+\begin{function}{mps\_comb(ψs, c; cutoff=1e-14)}
+Normalized MPS linear combination $\sum_j c_j\psi_j/\|\cdot\|$, summed pairwise with \code{cutoff}.
+\end{function}
+
+\begin{function}{ritz(HB, ψs)}
+Rayleigh--Ritz of $H$ in $\mathrm{span}(\psi_s)$: builds the overlap matrix $S_{ij} = \langle\psi_i|\psi_j\rangle$ and
+$H_{ij} = \langle\psi_i|H|\psi_j\rangle$, solves the generalized Hermitian problem $Hc = ESc$, and returns the energies (ascending) and the
+Ritz vectors as MPS. This separates the $\pm E$ members, which DMRG on $K = H^2+\eta^2$ cannot distinguish.
+\end{function}
+
+\begin{function}{localize\_majoranas(HB, sites, ψs, X)}
+\begin{Verbatim}
+    F  = eigen(Hermitian((Xm + Xm') / 2), Hermitian((S + S') / 2))
+    τx = ITensor([0.0 1.0; 1.0 0.0], ns', ns)
+    C(ψ) = (φ = dag(ψ); φ[1] = noprime(τx * φ[1]); φ)
+    fix(γ) = exp(im * angle(inner(γ, C(γ))) / 2) * γ
+\end{Verbatim}
+Localizes the zero-mode subspace with the position MPO $X$ (\code{array\_position\_mpo}): diagonalizes $X$ in the subspace,
+$X_{ij}c = r\,S_{ij}c$, so each eigenvector is the combination with a sharp position; the eigenvalues are the Majorana centres. It defines
+the particle--hole conjugation $C\psi = \tau_x\psi^*$ (complex conjugate the MPS, $\tau_x$ on the Nambu site), and fixes the global phase of
+each $\gamma$ so that $\langle\gamma|C\gamma\rangle$ is real and positive. \emph{Returns} \code{(; γs, centers, Hγ, C)}.
+\end{function}
+
+\begin{function}{clean\_majoranas(γs, C)}
+\begin{Verbatim}
+"""
+Make each γ exactly self-conjugate, γ ← (γ + Cγ)/‖·‖, then orthonormalize with the real Löwdin coefficients S^(-1/2)
+(⟨γᵢ|γⱼ⟩ is real for self-conjugate γ, so real combinations keep Cγ = γ). The leakage of section 6 assumes both.
+"""
+\end{Verbatim}
+Projects each $\gamma$ onto the self-conjugate subspace, then Löwdin-orthonormalizes with $W = S^{-1/2}$ ($S$ real symmetric), so that the
+$\gamma_i$ are exactly Majorana and orthonormal. Result in section 5: $\max\|C\gamma-\gamma\| = 1.3\times10^{-15}$,
+$\max|\langle\gamma_i|\gamma_j\rangle - \delta_{ij}| = 1.8\times10^{-9}$.
+\end{function}
+
+\begin{function}{pair\_modes(HB, γs)}
+Forms $\psi_A = (\gamma_1 + i\gamma_2)/\sqrt2$ and $\psi_B = (\gamma_3+i\gamma_4)/\sqrt2$. If $\langle\psi|H|\psi\rangle < 0$ it flips the sign of
+$\gamma_2$ (or $\gamma_4$); for self-conjugate $\gamma$ this replaces $\psi$ by its particle--hole partner $C\psi = (\gamma_1 - i\gamma_2)/\sqrt2$,
+which has the opposite energy. Both returned modes therefore have
+$\langle\psi|H|\psi\rangle\ge0$. \emph{Returns} the (possibly sign-flipped) \code{γs} and \code{[ψ\_A, ψ\_B]}. The \code{γs} are sorted by
+their position (from \code{localize\_majoranas}), so pairs (1,2) and (3,4) are the two ends of cell 1's and cell 3's segments.
+\end{function}
+
+%----------------------------------------------------------------------
+\subsection{Section 4: check of the MPO and export of \code{tb\_reference/}}
+
+The cell builds \code{a = TArray(L=4, ncell=3)}, \code{HB, sites = msh\_tjunction\_array(a, f0)} and compares with
+\code{array\_reference}; it also checks particle--hole symmetry with $C_d = \sigma_x\otimes\mathbb1$. Output:
+
+\begin{Verbatim}
+D = 576, χ(H) = 18, ‖H_MPO − H_dense‖ = 3.5e-12, PH ‖C H* C + H‖ = 0.0e+00
+exchange_12  t = 1020: ‖H_MPO(t) − H_dense(t)‖ = 4.3e-10, χ = 22
+exchange_23  t =  485: ‖H_MPO(t) − H_dense(t)‖ = 2.0e-09, χ = 21
+fusion       t =  300: ‖H_MPO(t) − H_dense(t)‖ = 1.9e-11, χ = 21
+\end{Verbatim}
+The protocol points are mid-exchange ($t = 1020 = T_{12}/2$; $t = 485 = T_{23}/2$ at \code{rot\_T = 100}) and late in the fusion ($t = 300$),
+each via \code{MovingArrayH}.
+
+\begin{function}{export\_tb\_reference(a, H\_at; out=joinpath(ROOT, "tb\_reference"))}
+Writes \code{coords.txt} (integer $x\ y$ of each site, order cell, $n$, arm) and the dense matrices \code{initial.bin},
+\code{z\_t1020.bin}, \code{x100\_t485.bin}, \code{fuse\_t300.bin} (raw \code{ComplexF64}, Julia column-major). Read by section 4 of
+\code{tjunctions\_python\_ed.ipynb}.
+\end{function}
+
+%----------------------------------------------------------------------
+\subsection{Section 5: subgap LDOS and MZMs from DMRG}
+
+\begin{function}{gauss(x); constants ηg, ωs}
+$g_\eta(x) = e^{-x^2/2\eta_g^2}/(\sqrt{2\pi}\eta_g)$ with $\eta_g = 0.01$; frequency grid \code{ωs} = 401 points on $[-0.2, 0.2]$.
+\end{function}
+
+\paragraph{Steps of the section (top-level code).}
+\begin{enumerate}
+\item \code{zero\_mode\_subspace(HB, sites; nzero=6)}: the six smallest-$|E|$ states (four MZMs and the $\pm0.127$ bound state of the trivial
+  junction 2) plus the gap-check state; 41~s.
+\item \code{ritz}: energies $[-0.127, -1.12\times10^{-9}, -1.08\times10^{-9}, 1.03\times10^{-9}, 1.13\times10^{-9}, 0.127]$, window edge 0.268.
+\item LDOS $A(\mathbf r,\omega) = \sum_k w_k(\mathbf r)\,g_\eta(\omega - E_k)$ with $w_k = |u|^2+|v|^2$ from \code{site\_uv}: total
+  (particle + hole, spin-summed). The window $|\omega|\le0.2$ lies inside the edge 0.268, so these six states are all that contribute.
+  Check: $\sum_{\mathbf r}\int A\,d\omega = 6.0000$; max $A = 17.34$. Written to \code{msh\_array\_ldos\_tn.csv} (columns \code{x,y,omega,A}).
+\item MZMs: the four Ritz states of smallest $|E|$ $\to$ \code{refine\_subspace} ($\sigma = 10^{-3}$) $\to$ \code{localize\_majoranas} with
+  \code{array\_position\_mpo} $\to$ \code{clean\_majoranas} $\to$ \code{pair\_modes}, giving \code{γ0} and \code{ψ0}; 279~s. Centres
+  $-46.5, -17.5, 16.5, 45.5$; $\langle\psi|H|\psi\rangle = 1.09\times10^{-9}, 1.16\times10^{-9}$; $\Delta Q$ of the two modes
+  $2.4\times10^{-6}$ and $-2.5\times10^{-7}$.
+\end{enumerate}
+
+\begin{function}{arrows!(p, x, y, u, v; ℓ=0.85, head=0.38, hw=0.42, color, lw, label)}
+Plot helper: draws arrows of length $\ell$ centred on $(x,y)$ along $(u,v)$ in data coordinates (a line for the shaft, a filled triangle for the
+head, NaN-separated so one series draws all arrows). Used for the in-plane moments in Fig.~\ref{fig:ldos}.
+\end{function}
+
+%----------------------------------------------------------------------
+\subsection{Section 6: gates followed by partial fusion with TDVP}
+
+Three runs, each one evolution of $\psi_A$ and $\psi_B$ from \code{ψ0}:
+\begin{center}
+\begin{tabular}{llllll}
+\toprule
+Run & Gate & Moving cells & $T_1$ & $T_{\rm gate}$ & $T_{\rm end}$\\
+\midrule
+Z & \code{exchange\_12} twice, then fusion & [1] & 2040 & 4080 & 4460\\
+X & \code{exchange\_23} (\code{rot\_T = 400}) twice, then fusion & [1, 2] & 3880 & 7760 & 8140\\
+F & fusion only & [1] & 0 & 0 & 380\\
+\bottomrule
+\end{tabular}
+\end{center}
+Snapshots every 5 time units during the gate and every 1 during the fusion. For X both cells move: cell 2 during the gate and cell 1
+during the fusion.
+
+\paragraph{Horizontal chain.} \code{hsites} lists the 96 sites of $y=0$ from left to right (per cell: arm 2 $n = 15\dots0$, then arm 1
+$n = 0\dots15$); \code{xh} their $x$ coordinates. $\delta n$ is recorded on these sites.
+
+\begin{function}{protocol(kind)}
+For \code{"Z"}, \code{"X"} or \code{"F"} returns \code{(; B, T1, Tg, tsnap)}: a \code{MovingArrayH} with texture
+\code{t < Tg ? fg(t < T1 ? t : t - T1) : f\_fuse(q, f0, t - Tg)} (the second exchange repeats the first), the duration of one exchange,
+the gate duration $T_g = 2T_1$, and the snapshot times \code{0:5:Tg} followed by \code{Tg+1:1:Tg+Tf}.
+\end{function}
+
+\begin{function}{tdvp\_log(key, msg; append=true), stamp(), hms(s); LOG\_FILE, STATUS\_FILE}
+Thread-safe progress reporting (a \code{ReentrantLock}). \code{tdvp\_log} appends a time-stamped line to \code{tdvp\_progress.log} (if
+\code{append}), stores the message as the latest status of evolution \code{key} (e.g.\ \code{"ZA"}), and rewrites \code{tdvp\_status.txt}
+with one line per evolution. \code{stamp()} gives the date and time, \code{hms(s)} formats seconds as h:mm:ss.
+\end{function}
+
+\begin{function}{run\_mode(kind, k, P)}
+Runs \code{evolve\_mode\_tdvp(P.B, ψ0[k], P.tsnap; γ0, slist=hsites, log=logf)} for mode $k$ (A or B) of run \code{kind}. The inner
+\code{logf} writes to the status file at every snapshot and to the log at every 1\% of $T_{\rm end}$, with $t$, $\chi$, the mode's $\Delta Q$,
+elapsed time and an estimate of the remaining time (elapsed$\cdot(1-f)/f$). Errors are logged as \code{FAILED} and rethrown. Returns the
+result merged with the wall time \code{secs}.
+\end{function}
+
+\paragraph{Final Hamiltonian.} \code{HT = protocol("F").B(Tf)} is the Hamiltonian at the end of the fusion (the same for every run).
+\code{zero\_mode\_subspace(HT, sites; nzero=4)}, \code{refine\_subspace} and \code{ritz} give its four lowest states
+\code{φF} with energies $[-0.0439, -1.16\times10^{-9}, 1.16\times10^{-9}, 0.0439]$ (253~s). Pair A is split to $\pm E_A$, pair B stays at zero.
+
+\begin{function}{fusion\_leak(ψ)}
+\begin{Verbatim}
+fusion_leak(ψ) = (c = [inner(φ, ψ) for φ in φF]; 1 - real(c' * (SF \ c)))
+\end{Verbatim}
+Leakage of an evolved mode out of $\mathrm{span}(\phi_F)$: $1 - c^\dagger S_F^{-1}c$ with $c_i = \langle\phi_i|\psi\rangle$ and the Gram matrix
+$S_F$, i.e.\ the norm of the projection onto a possibly non-orthogonal basis. The adiabatic $\Delta Q$ of pair A is
+\code{ΔQ\_mps(φF[iA])} for the $+E_A$ state \code{iA = argmax(EF)}: $-0.476854$.
+\end{function}
+
+\begin{function}{cache(kind); threaded execution}
+\code{cache(kind)} is the path \code{msh\_tjunctions\_tdvp\_\{kind\}.jls}. Runs whose cache is missing (or all, if \code{RUN\_TDVP}) are
+started as \code{@spawn(run\_mode(kind, k, P))} tasks, two per run, so up to six evolutions run in parallel, one per Julia thread, with
+BLAS set to one thread. For each run the results of both modes are serialized: \code{ts}, \code{z}, \code{dQ}, \code{dn}, \code{χ},
+\code{leak\_fus = fusion\_leak(ψT)}, \code{secs}, \code{threads}. Only numbers are cached, not the MPS. In the saved notebook the cache
+existed (the kernel ran on 1 thread); the timings in the cache are from the six-thread run.
+\end{function}
+
+\begin{function}{analyze(kind)}
+Loads the cache and returns a \code{Dict} with \code{:Tg}, \code{:ts}, \code{:dQ} (sum of both modes), \code{:D} ($\delta n$, sum of both
+modes, snapshot $\times$ site), \code{:χ} (max of both), \code{:secs}, \code{:threads}; for gate runs \code{:leak\_one} and \code{:leak}
+(\code{mode\_leak} at $t = T_1$ and $t = T_g$); and \code{:fusion} with the final $\Delta Q$, the per-mode $\Delta Q$, the fusion leakage and the
+time trace $\Delta Q(t - T_g)$ during the fusion.
+\end{function}
+
+\begin{function}{write\_density(name, r), density\_figure(ts, D, Tg, gate; method)}
+\code{write\_density} writes \code{msh\_gate\_density\_tdvp\_\{name\}.csv} (\code{t,x,dn}, $x$ fastest) and
+\code{msh\_gate\_dQ\_tdvp\_\{name\}.csv} (\code{t,dQ}). \code{density\_figure} draws two panels: $\log_{10}|\delta n(x,t)|$ over the whole
+protocol (clipped at $10^{-16}$, colour range $[-12, 0]$; dashed lines at $T_g/2$ and $T_g$, dotted at the junctions) and $\delta n(x,t)$ during
+the fusion on a symmetric colour scale, with $\sum_{\rm chain}\delta n$ at the end in the title.
+\end{function}
+
+\paragraph{Results.} Z: leakage after one exchange $(9.72\times10^{-7}, 1.65\times10^{-11})$, after two $(1.99\times10^{-6},
+2.07\times10^{-11})$; fusion $\Delta Q = -0.477717$ (A $-0.477717$, B $1.4\times10^{-7}$), leak $(3.69\times10^{-5}, 1.44\times10^{-11})$.
+Fusion only: $\Delta Q = -0.477372$, leak $(3.78\times10^{-5}, 7.0\times10^{-12})$. X: leakage after two exchanges
+$(3.42\times10^{-5}, 3.49\times10^{-5})$; fusion $\Delta Q = +0.477004$ (A $+0.476113$, B $+8.9\times10^{-4}$), leak $(8.08\times10^{-5},
+3.33\times10^{-5})$. The sum over the horizontal chain at the end is $\mp0.444$ (figure titles); the rest of $\Delta Q$ lies on the vertical leg,
+since $\Delta Q$ is summed over all sites while $\delta n$ is recorded on $y=0$ only.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{tn_density_Z.png}
+\caption{TN, Z run (\code{density\_figure}). Left: $\log_{10}|\delta n(x,t)|$ on the horizontal chain over two \code{exchange\_12} and the
+fusion (dashed: $T_1 = 2040$, $T_g = 4080$). The weight of $\psi_A$ moves around junction 1 ($x=-32$) while cell 3 ($x>16$) is static.
+Right: $\delta n$ during the fusion; the charge appears at the three topological sites around junction 1.}
+\end{figure}
+
+%----------------------------------------------------------------------
+\subsection{Section 7: \texorpdfstring{$\Delta Q$}{ΔQ} during the fusion and bond dimension}
+
+Top-level plotting code (no new functions). Left panel: $\Delta Q(t-T_g)$ for Z, X and F; right: $\max\chi(\psi_A,\psi_B)$ against
+$t/T_{\rm end}$, with the start of the fusion marked. The bond dimension saturates at 24 early in every run, well below \code{maxdim = 64}.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{tn_dQ_chi.png}
+\caption{TN, section 7. Left: $\Delta Q$ during the partial fusion; Z and no gate give $-0.477$, X gives $+0.477$. The charge develops for
+$t - T_g\gtrsim 260$, when the last ramped sites of cell 1 (arm $n = 2$, delay $0.2\cdot13$, i.e.\ $t-T_g = 260$) turn trivial. Right: largest bond dimension of the two modes, saturating at $\chi=24$.}
+\end{figure}
+
+%----------------------------------------------------------------------
+\subsection{Section 8: summary}
+
+Top-level code writes 12 \code{key,value} rows to \code{msh\_tjunctions\_tn\_gates.csv}: \code{Z\_leak\_A/B}, \code{X\_leak\_A/B} (after two
+exchanges), \code{Z/X/F\_fus\_dQ}, \code{Z/X/F\_fus\_leak\_A}, \code{fus\_dQad\_A} ($-0.476854$) and \code{fus\_E\_A} ($0.0438539$). The
+values appear in Table~\ref{tab:compare}.
+
+%----------------------------------------------------------------------
+\subsection{Section 9: cost of the tensor-network route}
+
+Measured wall times (from the cache for TDVP; each evolution on one thread, six at once):
+
+\begin{center}
+\begin{tabular}{lrrr}
+\toprule
+Step & Wall time & Steps & Per step\\
+\midrule
+DMRG, six subgap states & 0:00:41 & & \\
+refinement + localization & 0:04:39 & & \\
+DMRG, final Hamiltonian & 0:04:13 & & \\
+TDVP Z, mode A / B & 1:17:48 / 1:06:57 & 44\,600 & 104.7 / 90.1 ms\\
+TDVP X, mode A / B & 2:18:53 / 2:16:30 & 81\,400 & 102.4 / 100.6 ms\\
+TDVP F, mode A / B & 0:08:06 / 0:06:32 & 3\,800 & 127.9 / 103.3 ms\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{function}{bench\_tdvp(L; χ=24, nsteps=10)}
+\begin{Verbatim}
+"Time per TDVP step (dt = 0.1, maxdim = 64) for arms of 2^L sites, initial Hamiltonian, random MPS of bond dimension χ."
+\end{Verbatim}
+Builds the array with arms of $2^L$ sites, a \code{MovingArrayH} with the static texture \code{f0}, and a random complex MPS of bond dimension
+24 (the value reached in section 6). One step is run first to exclude compilation, then \code{nsteps} are timed with the same TDVP settings
+as section 6. \emph{Returns} \code{(; L, nsite, per\_step, mps\_size, dense\_size)}, where \code{mps\_size} is the number of complex entries of
+the MPS and \code{dense\_size} $= 4\,n_{\rm site}$.
+
+\begin{center}
+\begin{tabular}{rrrrr}
+\toprule
+$L$ & sites & TDVP step & MPS entries & dense entries\\
+\midrule
+4 & 144 & 93.3 ms & 4845 & 576\\
+5 & 288 & 115.4 ms & 5997 & 1152\\
+6 & 576 & 247.3 ms & 7149 & 2304\\
+\bottomrule
+\end{tabular}
+\end{center}
+Doubling the number of sites adds one qubit to the MPS, so its size grows by a constant ($\approx1150$ entries) per doubling. All times and
+sizes go to \code{msh\_tjunctions\_tn\_timing.csv}.
+\end{function}

@@ -1,0 +1,33 @@
+% Shared preamble for the MSH_Tensor_Network_Methods function references (compile with tectonic / XeLaTeX)
+\usepackage{fontspec}
+\usepackage{unicode-math}
+\setmainfont{texgyrepagella}[Extension=.otf,UprightFont=*-regular,BoldFont=*-bold,ItalicFont=*-italic,BoldItalicFont=*-bolditalic]
+\setmathfont{texgyrepagella-math.otf}
+\setmonofont{DejaVu Sans Mono}[Scale=0.82]
+\newfontfamily\symfb{DejaVu Sans}[Scale=0.82]
+\usepackage{newunicodechar}
+\newunicodechar{ℓ}{{\symfb ℓ}}
+\newunicodechar{∥}{{\symfb ∥}}
+\newunicodechar{≪}{{\symfb ≪}}
+\usepackage[a4paper,margin=2.2cm]{geometry}
+\usepackage{amsmath}
+\usepackage{booktabs,tabularx,longtable,array}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{float}
+\usepackage{caption}
+\captionsetup{font=small,labelfont=bf}
+\usepackage{fvextra}
+\fvset{breaklines,breakanywhere,fontsize=\small,frame=leftline,framerule=1.5pt,rulecolor=\color{gray!45},xleftmargin=6pt}
+\usepackage{enumitem}
+\setlist{nosep,leftmargin=*}
+\usepackage[hidelinks]{hyperref}
+\usepackage{titlesec}
+\titleformat{\section}{\Large\bfseries}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\large\bfseries}{\thesubsection}{0.6em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries}{\thesubsubsection}{0.6em}{}
+\setlength{\parskip}{0.45em}\setlength{\parindent}{0pt}
+% one box per function: \fn{name}{signature} then a description
+\newcommand{\fnname}[1]{\texttt{\textbf{#1}}}
+\newenvironment{function}[1]{\par\medskip\noindent\textbf{\large\texttt{#1}}\par\nopagebreak}{\par\medskip}
+\newcommand{\code}[1]{\texttt{#1}}

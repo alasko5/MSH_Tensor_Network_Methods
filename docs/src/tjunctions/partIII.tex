@@ -1,0 +1,170 @@
+%======================================================================
+\section{Part III --- Comparison notebook (\code{tjunctions\_compare.ipynb})}
+%======================================================================
+
+The notebook only loads the files written by the other two notebooks and compares them, so it runs in seconds. Each comparison row prints
+$\max|\text{Julia} - \text{Python}|$ against a tolerance that is set by the error of the tensor-network method: the DMRG error for the LDOS
+and the zero modes, the TDVP error (\code{maxdim = 64}, $dt = 0.1$) for everything time dependent. The X gate is the run with
+\code{rot\_Tx = 400}.
+
+\subsection{Helper functions}
+
+\begin{function}{check(name, a, b, tol)}
+\begin{Verbatim}
+def check(name, a, b, tol):
+    d = float(np.max(np.abs(np.asarray(a) - np.asarray(b))))
+    rows.append((name, d, tol))
+    print(f"{name:<52s} {d:9.1e}  (tol {tol:.0e})  {'✓' if d <= tol else '✗'}")
+\end{Verbatim}
+Maximum absolute difference of two arrays or scalars; appends \code{(name, d, tol)} to the global list \code{rows} and prints ✓ if
+$d\le$ \code{tol}, ✗ otherwise.
+\end{function}
+
+\begin{function}{read\_csv(name), tn\_density(name)}
+\code{read\_csv} loads a CSV with one header line (\code{np.loadtxt}). \code{tn\_density} turns a $\delta n$ CSV (columns \code{t, x, dn}, $x$
+fastest) into the sorted unique times, the sorted unique $x$ and the $(t, x)$ table.
+\end{function}
+
+\subsection{Section 1: subgap LDOS (row 1)}
+
+The Python LDOS (\code{array\_ldos\_kwant.npz}, site $\times\omega$) and the Julia CSV (looked up by $(x, y, \omega)$ with $\omega$ rounded to
+6 digits) are compared on all 144 sites and 401 frequencies. Julia uses the six lowest-$|E|$ states from penalized DMRG, Python every
+eigenstate; inside the window only those six states contribute, so the difference is the DMRG error. Tolerance $10^{-3}$; result
+$3.9\times10^{-4}$. The two maxima printed in Parts I and II differ (17.34 is the maximum over all $\omega$, 15.21 the maximum at $\omega = 0$).
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{cmp_ldos.png}
+\caption{Comparison, section 1: $A(x,\omega=0)$ along the horizontal chain and $A(\omega)$ at the site of largest zero-energy weight,
+$(x,y) = (-17, 0)$. Python (dense) lines, Julia (DMRG) markers.}
+\end{figure}
+
+\subsection{Section 2: TDVP \texorpdfstring{$\delta n(x,t)$ and $\Delta Q(t)$}{δn(x,t) and ΔQ(t)} (rows 2--5)}
+
+For Z and X the Julia CSVs \code{msh\_gate\_density\_tdvp\_\{Z,X\}.csv}, \code{msh\_gate\_dQ\_tdvp\_\{Z,X\}.csv} are compared with
+\code{gate\_density\_kwant\_\{Z,X400\}.npz}. An \code{assert} first checks that the snapshot times and the $x$ grid agree (both codes snapshot every
+5 during the gate and every 1 during the fusion). $\delta n$ is taken on the horizontal chain; $\Delta Q(t)$ is summed over all sites.
+
+\paragraph{Tolerance $10^{-4}$, and why.} The two time integrators differ. TDVP freezes $H$ at the midpoint of each step (second order,
+$dt = 0.1$); the Python Gauss--Legendre step is fourth order ($dt = 0.25$) and converged. The markdown states that the midpoint rule at $dt = 0.1$
+has a time-step error of a few $10^{-5}$ in the state, measured against a converged reference, which accumulates over the long X protocol. At the
+end of each protocol the two agree to $\sim10^{-7}$ (section 3).
+
+\begin{center}
+\begin{tabular}{lrr}
+\toprule
+Row & $\max|\text{Julia}-\text{Python}|$ & tol\\
+\midrule
+TDVP $\delta n(x,t)$, Z gate + fusion & $7.9\times10^{-6}$ & $10^{-4}$\\
+TDVP $\Delta Q(t)$, Z gate + fusion & $8.0\times10^{-6}$ & $10^{-4}$\\
+TDVP $\delta n(x,t)$, X gate + fusion & $2.3\times10^{-5}$ & $10^{-4}$\\
+TDVP $\Delta Q(t)$, X gate + fusion & $2.6\times10^{-5}$ & $10^{-4}$\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{cmp_dn.png}
+\caption{Comparison, section 2: $\log_{10}|\delta n_{\rm TDVP} - \delta n_{\rm Python}|$ on the horizontal chain over the full Z and X protocols
+(dashed: end of the first exchange and of the gate). The differences stay below $10^{-5}$ and are largest along the paths of the moving Majoranas.}
+\end{figure}
+
+\subsection{Section 3: leakage and fusion quantities (rows 6--17)}
+
+\code{msh\_tjunctions\_tn\_gates.csv} and \code{gates\_kwant.npz} are read into dicts with the same 12 keys. Tolerance $10^{-5}$ for the
+time-dependent quantities and $10^{-6}$ for the two static end-of-fusion quantities (\code{fus\_E\_A}, \code{fus\_dQad\_A}), which come from DMRG
+in Julia and from diagonalization in Python.
+
+\subsection{Results table}
+
+\begin{table}[H]
+\centering
+\small\setlength{\tabcolsep}{4pt}
+\caption{All 17 comparison rows of \code{tjunctions\_compare.ipynb}, in the printed order. Values from \code{msh\_tjunctions\_tn\_gates.csv}
+(Julia) and \code{gates\_kwant.npz} (Python). Result: 17 of 17 within tolerance.}
+\label{tab:compare}
+\begin{tabular}{rlrrrrc}
+\toprule
+\# & Quantity & Julia (TN) & Python & $|\text{diff}|$ & tol & \\
+\midrule
+1 & LDOS $A(\mathbf r,\omega)$, DMRG (6 states) vs dense & -- & -- & $3.9\times10^{-4}$ & $10^{-3}$ & ✓\\
+2 & TDVP $\delta n(x,t)$, Z gate + fusion & -- & -- & $7.9\times10^{-6}$ & $10^{-4}$ & ✓\\
+3 & TDVP $\Delta Q(t)$, Z gate + fusion & -- & -- & $8.0\times10^{-6}$ & $10^{-4}$ & ✓\\
+4 & TDVP $\delta n(x,t)$, X gate + fusion & -- & -- & $2.3\times10^{-5}$ & $10^{-4}$ & ✓\\
+5 & TDVP $\Delta Q(t)$, X gate + fusion & -- & -- & $2.6\times10^{-5}$ & $10^{-4}$ & ✓\\
+6 & Z: leak $\psi_A$ & $1.99193\times10^{-6}$ & $1.99727\times10^{-6}$ & $5.3\times10^{-9}$ & $10^{-5}$ & ✓\\
+7 & Z: leak $\psi_B$ & $2.07467\times10^{-11}$ & $-1.33\times10^{-15}$ & $2.1\times10^{-11}$ & $10^{-5}$ & ✓\\
+8 & X: leak $\psi_A$ & $3.41817\times10^{-5}$ & $3.41631\times10^{-5}$ & $1.9\times10^{-8}$ & $10^{-5}$ & ✓\\
+9 & X: leak $\psi_B$ & $3.48854\times10^{-5}$ & $3.48691\times10^{-5}$ & $1.6\times10^{-8}$ & $10^{-5}$ & ✓\\
+10 & fusion $\Delta Q$ after Z & $-0.477717$ & $-0.477717$ & $1.5\times10^{-7}$ & $10^{-5}$ & ✓\\
+11 & fusion $\Delta Q$ after X & $+0.477004$ & $+0.477004$ & $1.9\times10^{-7}$ & $10^{-5}$ & ✓\\
+12 & fusion $\Delta Q$, no gate & $-0.477372$ & $-0.477373$ & $5.4\times10^{-7}$ & $10^{-5}$ & ✓\\
+13 & fusion leak $\psi_A$ after Z & $3.6929\times10^{-5}$ & $3.6963\times10^{-5}$ & $3.4\times10^{-8}$ & $10^{-5}$ & ✓\\
+14 & fusion leak $\psi_A$ after X & $8.07556\times10^{-5}$ & $8.0751\times10^{-5}$ & $4.6\times10^{-9}$ & $10^{-5}$ & ✓\\
+15 & fusion leak $\psi_A$, no gate & $3.77714\times10^{-5}$ & $3.77783\times10^{-5}$ & $6.9\times10^{-9}$ & $10^{-5}$ & ✓\\
+16 & adiabatic $\Delta Q$ of pair A (end of fusion) & $-0.476854$ & $-0.476854$ & $7.1\times10^{-9}$ & $10^{-6}$ & ✓\\
+17 & $E_A$ (end of fusion) & $0.0438539$ & $0.0438539$ & $4.0\times10^{-15}$ & $10^{-6}$ & ✓\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.62\textwidth]{cmp_summary.png}
+\caption{Comparison, section 5: $\max|\text{Julia}-\text{Python}|$ of every row (bars) against its tolerance (black ticks), log scale.}
+\end{figure}
+
+\subsection{Section 4: cost and scaling}
+
+The two routes evolve different objects. Julia evolves the two zero-mode fermions as MPS (2-site TDVP, $dt = 0.1$, one task per mode); Python
+evolves the full $4N\times4N$ BdG basis (sparse Gauss--Legendre, $dt = 0.25$), from which it reads the charge density of the logical states.
+Both run each evolution on one thread; in Julia the six evolutions ran at the same time on six threads, which the markdown says slows each one a
+little (shared memory bandwidth).
+
+\paragraph{Measured runs} (144 sites, $D = 576$). Julia time = sum of the two TDVP evolutions (they ran concurrently, so the wall-clock time of a
+run is about half of this); Python time = gate + fusion of the full-basis evolution.
+
+\begin{center}
+\begin{tabular}{lrrrrr}
+\toprule
+Run & TDVP steps & Julia time & full-basis steps & Python time & ratio\\
+\midrule
+Z gate + fusion & 44\,600 & 144.7 min & 17\,840 & 10.4 min & 13.9×\\
+X (\code{rot\_Tx = 400}) + fusion & 81\,400 & 275.4 min & 32\,560 & 19.4 min & 14.2×\\
+fusion only & 3\,800 & 14.6 min & 1\,520 & 0.9 min & 16.3×\\
+zero modes$^{*}$ & & 320 s & & 0.08 s & \\
+\bottomrule
+\end{tabular}\\[0.3em]
+{\small $^{*}$ Julia: DMRG of the six subgap states + refinement and localization; Python: one \code{eigh}.}
+\end{center}
+
+\paragraph{Scaling.} Cost per unit of simulated time (the methods use different steps): Julia $2\times$\code{bench\_step\_L}$/0.1$ (both
+modes), Python \code{bench\_step}$/0.25$. Memory: MPS entries of the two modes, against $D^2$ entries of the evolved full basis (and $2D$ for
+two dense vectors, plotted for reference). A straight-line fit of $\log(\text{cost})$ against $\log(\text{sites})$ gives the local power law.
+
+\begin{center}
+\begin{tabular}{rrrrrrr}
+\toprule
+sites & $D$ & TDVP (s / unit $t$) & full basis (s / unit $t$) & \code{eigh} & MPS entries & full basis $D^2$\\
+\midrule
+144 & 576 & 1.87 & 0.10 & 0.08 s & 9\,690 & 331\,776\\
+288 & 1152 & 2.31 & 0.63 & 0.54 s & 11\,994 & 1\,327\,104\\
+576 & 2304 & 4.95 & 4.38 & 5.65 s & 14\,298 & 5\,308\,416\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Local power laws, cost $\propto$ sites$^p$: TDVP $p = 0.70$, full-basis evolution $p = 2.74$. At 576 sites the two costs per unit time are
+nearly equal (4.95 vs 4.38 s); the dotted extrapolation in the figure is the fitted power law.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{cmp_scaling.png}
+\caption{Comparison, section 4. Left: seconds per unit of simulated time for TDVP (two modes) and the full-basis Gauss--Legendre evolution, with
+power-law extrapolations (dotted). Right: number of complex numbers stored for the evolved state.}
+\end{figure}
+
+\subsection{Section 5: summary}
+
+Counts the rows within tolerance (17 of 17), lists any failures (none) and draws the bar chart above.

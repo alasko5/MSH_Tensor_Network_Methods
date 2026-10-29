@@ -17,6 +17,20 @@ Python/kwant notebooks.
 | `tjunctions_compare.ipynb` | Python | Number-by-number comparison of the two T-junction notebooks: LDOS, MPS/TDVP δn(x, t) and ΔQ(t), and the leakage and fusion quantities against the dense Python results (one ✓/✗ row each), plus the runtimes and the scaling of both methods with system size. |
 | `kitaev_charge_difference.ipynb` | Julia | Kitaev chain: fermion mode from the DMRG Majorana doublet, KPM LDOS, McWeeny bulk projector with ϵF = −(E_mode + E_gap)/2, ΔQ versus topological length, and a time-dependent smoothstep ramp that fuses the Majoranas (TDVP, with TDVP and McWeeny bulk densities). |
 
+## Documentation
+
+Function references (PDF) in `docs/`. Each describes every function in its notebooks: method, inputs and outputs, numerical
+settings, and the printed results and figures.
+
+| File | Covers |
+| --- | --- |
+| `docs/kitaev_charge_difference_function_reference.pdf` | `kitaev_charge_difference.ipynb` |
+| `docs/msh_chain_function_reference.pdf` | `msh_chain_tn.ipynb`, `msh_chain_python_ed.ipynb`, `msh_chain_compare.ipynb`, and the TensorBinding routines they use |
+| `docs/msh_tjunctions_function_reference.pdf` | `msh_tjunctions_tn.ipynb`, `tjunctions_python_ed.ipynb`, `tjunctions_compare.ipynb` |
+
+The LaTeX sources are in `docs/src/`; `docs/src/build.sh` rebuilds the PDFs from them and the notebook outputs (see
+`docs/src/README.md`).
+
 ## Data files
 
 Committed CSVs (small results that other notebooks read):
@@ -27,8 +41,16 @@ Committed CSVs (small results that other notebooks read):
 | `msh_gate_density_tdvp_{Z,X}.csv`, `msh_gate_dQ_tdvp_{Z,X}.csv` | `msh_tjunctions_tn.ipynb` (TDVP, section 6) | `tjunctions_compare.ipynb` |
 | `msh_tjunctions_tn_gates.csv`, `msh_tjunctions_tn_timing.csv` | `msh_tjunctions_tn.ipynb` (sections 8 and 9) | `tjunctions_compare.ipynb` |
 
-Caches and large outputs (`*.jls`, `*.npz`, `*.npy`, `*.h5`, `*_data/`, `tb_reference/`) are not committed (see `.gitignore`). The
-notebooks write them next to themselves on the first run and load them afterwards:
+Also committed, so that the two compare notebooks run from a fresh clone without rerunning anything:
+
+| File | Written by | Read by |
+| --- | --- | --- |
+| `msh_chain_tn_results.npz` | `msh_chain_tn.ipynb` (last section) | `msh_chain_compare.ipynb` |
+| `msh_compare_python.npz` | `msh_chain_python_ed.ipynb` | `msh_chain_compare.ipynb` |
+| `tjunctions_python_ed_data/*.npz` | `tjunctions_python_ed.ipynb` | `tjunctions_compare.ipynb` |
+
+Other caches and large outputs (`*.jls`, other `*.npz`, `*.npy`, `*.h5`, the figures in `*_data/`, `tb_reference/`) are not committed
+(see `.gitignore`). The notebooks write them next to themselves on the first run and load them afterwards:
 
 - `msh_chain_tn.ipynb`: `msh_chain_ldos_kpm_ramp.jls` (KPM LDOS, ~30 min), `msh_chain_charge.jls` (~10 min),
   `msh_chain_ramp.jls` (~4 min). Set the matching `RUN_*` flag to `true` to recompute. Its last section writes
@@ -41,21 +63,28 @@ notebooks write them next to themselves on the first run and load them afterward
 
 ## Running
 
-1. **Julia notebooks.** Julia 1.13 with an IJulia kernel and these packages in the active environment:
-   `TensorBinding` (0.2.0, General registry), `ITensors`, `ITensorMPS`, `Plots`, `NPZ`, `IJulia`.
-   ```julia
-   using Pkg
-   Pkg.add(["TensorBinding", "ITensors", "ITensorMPS", "Plots", "NPZ", "IJulia"])
+1. **Julia notebooks.** Julia 1.13. `Project.toml` and `Manifest.toml` pin the exact package versions the outputs were
+   produced with (TensorBinding 0.2.0 from the General registry, ITensors 0.9, ITensorMPS 0.3, Plots, NPZ, IJulia). From this
+   directory:
+   ```bash
+   julia --project=. -e 'using Pkg; Pkg.instantiate()'
+   julia --project=. -e 'using IJulia; installkernel("Julia MSH", "--project=@.")'
    ```
-2. **Python notebooks.** A conda environment with `numpy`, `scipy`, `matplotlib`, `numba`, `ipywidgets`, `tqdm`
-   and `kwant` (developed with kwant 1.5, NumPy 2.3, SciPy 1.16).
-3. **MSH chain comparison.** Run `msh_chain_python_ed.ipynb` (about 4 minutes) and `msh_chain_tn.ipynb` (a few minutes
-   with its caches), in either order, in this directory. Then run `msh_chain_compare.ipynb`, which loads the two `.npz` files
-   and prints a ✓/✗ table.
+   The second line installs a Jupyter kernel that uses this project when a notebook is opened here. Select it in Jupyter
+   (the notebooks' saved kernel name, `julia-1.13`, is only that of the machine they were run on).
+2. **Python notebooks.** `environment.yml` (conda-forge) pins the versions used: Python 3.13, NumPy 2.3.5, SciPy 1.16.3,
+   Matplotlib 3.10.6, kwant 1.5.0, numba, ipywidgets, tqdm and JupyterLab.
+   ```bash
+   conda env create -f environment.yml
+   conda activate msh-tn
+   ```
+3. **MSH chain comparison.** `msh_chain_compare.ipynb` runs immediately on the committed `.npz` files and prints a ✓/✗
+   table. To regenerate them, run `msh_chain_python_ed.ipynb` (about 4 minutes) and `msh_chain_tn.ipynb` (a few minutes
+   with its caches), in either order, in this directory.
 4. **T-junction array.** Run `msh_tjunctions_tn.ipynb` first; it writes `tb_reference/`. Its first run does the TDVP of section 6, about
    2.5 hours with six threads (start Jupyter with `JULIA_NUM_THREADS=6`; follow `tdvp_status.txt`); later runs load the cached results
    and take about 10 minutes (DMRG). Then run `tjunctions_python_ed.ipynb` (about 35 minutes) in the same directory, and finally
-   `tjunctions_compare.ipynb`.
+   `tjunctions_compare.ipynb`. The compare notebook alone runs immediately on the committed CSV and `.npz` files.
 
 ## Conventions
 

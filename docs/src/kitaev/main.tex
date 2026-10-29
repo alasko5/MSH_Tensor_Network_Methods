@@ -1,0 +1,1021 @@
+\documentclass[11pt]{article}
+\input{../preamble.tex}
+\graphicspath{{figs/}}
+\setlength{\emergencystretch}{3em}
+\newcommand{\nb}{\code{kitaev\_charge\_difference.ipynb}}
+\newcommand{\ket}[1]{\lvert #1\rangle}
+\newcommand{\bra}[1]{\langle #1\rvert}
+\newcommand{\Tr}{\operatorname{Tr}}
+
+\begin{document}
+
+\begin{titlepage}
+\centering
+\vspace*{3cm}
+{\Huge\bfseries Kitaev Chain Charge Difference\par}
+\vspace{0.8cm}
+{\LARGE Function reference\par}
+\vspace{1.2cm}
+{\large Notebook: \nb\par}
+\vspace{0.3cm}
+{\large Repository: \code{MSH\_Tensor\_Network\_Methods}\par}
+\vspace{0.3cm}
+{\large Julia 1.13, TensorBinding.jl, ITensors.jl / ITensorMPS.jl\par}
+\vspace{1.5cm}
+{\large 2026-10-29\par}
+\vfill
+\begin{minipage}{0.85\textwidth}\small
+This document explains every function and helper defined in the notebook: what it computes, the method,
+inputs and outputs, the numerical settings that matter, and where it is used. All statements are taken from the
+notebook's code, comments, markdown and saved outputs. Where a library routine of TensorBinding.jl is relevant, its
+behaviour is quoted from the package source and marked as such.
+\end{minipage}
+\end{titlepage}
+
+\tableofcontents
+\clearpage
+
+%======================================================================
+\section{Overview}
+%======================================================================
+
+\subsection{The model as built in the notebook}\label{sec:model}
+
+The notebook studies a spinless one-dimensional Kitaev chain with nearest-neighbour hopping, a site-dependent
+on-site potential $V(x)$ (called the chemical potential in the notebook) and nearest-neighbour $p$-wave pairing.
+Every Hamiltonian is created with three TensorBinding calls:
+\begin{Verbatim}
+H = TensorBinding.get_Hamiltonian("chain_1d", 1.0; L = Lℓ)   # chain of 2^L sites, hopping 1.0
+TensorBinding.add_onsite!(H, Vf)                               # V(x); Vf receives a 0-indexed site
+TensorBinding.add_superconductivity!(H, 1.0)                   # pairing amplitude 1.0
+\end{Verbatim}
+For spinless fermions \code{add\_superconductivity!} prints \emph{``On-site (s-wave) pairing is forbidden for
+spinless fermions \ldots{} Constructing nearest-neighbour p-wave instead''}, so the pairing is nearest-neighbour
+$p$-wave with $\Delta = 1$. The resulting object is a \code{TBHamiltonian} (printed as
+\code{L=6, N=64 +BdG, maxlinkdim=5}) whose field \code{.mpo} is the Bogoliubov--de~Gennes (BdG) Hamiltonian as an
+MPO, \code{.sites} its site indices, \code{.L} the number of position bits and \code{.N}$=2^L$ the number of lattice
+sites.
+
+\paragraph{Sign conventions of the library Hamiltonian.}
+Cell 35 reads the dense BdG matrix of the hopping-plus-pairing part off the MPO (\code{dense\_bdg}, \S\ref{sec:td})
+and compares it element by element with
+\[
+  H_{\text{BdG}}=\begin{pmatrix} h & \Delta\\ \Delta^\dagger & -h^{T}\end{pmatrix},\qquad
+  h_{x,x\pm1}=+t,\quad \Delta_{x,x+1}=+\Delta,\quad \Delta_{x+1,x}=-\Delta,\quad \Delta_{x,x}=0,
+\]
+with $t=\Delta=1$ (maximum deviation $3.6\times10^{-15}$). In second quantization,
+\[
+  H=\sum_x\Bigl[t\,(c_x^\dagger c_{x+1}+\text{h.c.})+\Delta\,(c_x^\dagger c_{x+1}^\dagger+\text{h.c.})+V(x)\,c_x^\dagger c_x\Bigr],
+\]
+with the on-site term entering the BdG matrix as $\tau_z\otimes\operatorname{diag}V$. The hopping thus enters with a
+$+$ sign. The gauge transformation $c_x\to(-1)^x c_x$ maps $t\to-t$ (and $\Delta\to-\Delta$), so the spectrum is that of
+the usual Kitaev chain with hopping $-t$, topological for $|V|<2|t|$.
+
+\paragraph{Nambu and position qubits.}
+A BdG single-particle state is an MPS on $L+1$ two-level sites. Site~1 is the Nambu index
+($\ket{0}$ = particle, $\ket{1}$ = hole; ``Nambu is first index'' in the code). Sites $2,\dots,L+1$ are the binary
+digits $b_1\dots b_L$ of the position, most significant first, with
+\[
+  x = 1 + \sum_{k=1}^{L} b_k\, 2^{L-k}, \qquad x = 1,\dots,N=2^L .
+\]
+A BdG vector $\psi = (u, v)$ thus has particle amplitudes $u(x) = \langle 0, x\vert\psi\rangle$ and hole amplitudes
+$v(x) = \langle 1, x\vert \psi\rangle$. The on-site potential enters as $\tau_z\otimes\operatorname{diag}V(x)$; the
+notebook checks this numerically ($\langle 0,x\vert H\vert 0,x\rangle = V(x)$, see \code{charge\_difference} and the
+time-dependent section).
+
+\paragraph{Particle--hole conjugation.}
+The BdG Hamiltonian anticommutes with $C=\tau_x K$ ($K$ = complex conjugation). On an MPS the notebook implements
+$C$ as \code{dag(ψ)} (complex conjugation of all tensors) followed by $\tau_x$ applied to the Nambu site. For
+$\psi=(u,v)$ this gives $C\psi = (v^*, u^*)$. If $H\psi = E\psi$ then $H C\psi = -E\, C\psi$, so states come in $\pm E$
+pairs. A Majorana state is self-conjugate, $C\gamma=\gamma$.
+
+\paragraph{Parameters.}
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Quantity & Static part (\S\ref{sec:fermion}--\ref{sec:dq}) & Time-dependent part (\S\ref{sec:td}) \\
+\midrule
+Position bits $L$ & \code{Lℓ = 6} & \code{Lt = 5} \\
+Sites $N = 2^L$ & 64 & 32 \\
+Hopping, pairing & 1.0, 1.0 & 1.0, 1.0 \\
+Topological potential & \code{V\_in = -1.0} & \code{μ\_topo\_t = -0.4} \\
+Trivial potential & \code{V\_out = -4.0} & \code{μ\_triv\_t = -5.6} \\
+Topological region & centred, length $\ell$ (\code{region(ℓ)}) & whole chain at $t=0$, site 16 at $t=T$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+With hopping 1 the notebook's markdown refers to the topological criterion $|\mu|<2t$; $V=-1$ and $-0.4$ are
+inside it, $-4$ and $-5.6$ outside.
+
+\subsection{Logical states and the charge difference}
+
+Following the notebook's markdown, the two logical states $\ket{0}$ (fermion mode empty) and $\ket{1}$ (mode
+occupied) are represented by their BdG correlation matrices
+\[
+  \Gamma_{ab} = \langle \Psi_b^\dagger \Psi_a\rangle, \qquad
+  \Psi = (c_1,\dots,c_N, c_1^\dagger,\dots,c_N^\dagger).
+\]
+Since $H$ is quadratic, $\Gamma$ fully characterises the BCS state and is the projector on its occupied BdG states.
+Both logical states share the filled bulk projector $P_{\text{bulk}}$ and differ in which member of the near-zero
+pair $\pm E$ is filled:
+\[
+  \Gamma_0 = P_{\text{bulk}} + \ket{\bar\psi_f}\bra{\bar\psi_f}, \qquad
+  \Gamma_1 = P_{\text{bulk}} + \ket{\psi_f}\bra{\psi_f}, \qquad \bar\psi_f = C\psi_f .
+\]
+The local density is the particle--particle diagonal, $n(x)=\langle c_x^\dagger c_x\rangle = \langle 0,x\vert\Gamma\vert 0,x\rangle$.
+Because $\Gamma_1-\Gamma_0 = \ket{\psi_f}\bra{\psi_f} - \ket{\bar\psi_f}\bra{\bar\psi_f}$ exactly,
+\begin{equation}\label{eq:dq}
+  \delta n(x) = n_1(x)-n_0(x) = |u_f(x)|^2 - |u_{\bar f}(x)|^2 = |u_f(x)|^2-|v_f(x)|^2,
+  \qquad
+  \Delta Q = \sum_x \delta n(x) = \bra{\psi_f}\tau_z\ket{\psi_f}.
+\end{equation}
+The second equality uses $u_{\bar f} = v_f^*$ from $C\psi=(v^*,u^*)$. The physical charge is $-e\,\delta n$;
+plots label $|\Delta Q|$ in units of $-e$.
+
+\subsection{Workflow of the notebook}
+\begin{enumerate}
+\item Helpers to build position basis states (\S\ref{sec:basis}).
+\item ``Good'' single-particle states: penalized DMRG for the near-zero doublet, localisation of the Majoranas by
+      diagonalising the position operator, self-conjugation, pairing into $\psi_f$ (\S\ref{sec:fermion}).
+\item KPM local density of states and the bulk gap estimate \code{kpm\_gap} (\S\ref{sec:kpm}).
+\item McWeeny-purified bulk projector, $\Gamma_0$, $\Gamma_1$, consistency checks and local densities (\S\ref{sec:gamma}).
+\item $\Delta Q$ versus the length $\ell$ of the topological region, by two methods (\S\ref{sec:dq}).
+\item Time-dependent smoothstep ramp that moves the Majoranas together: TDVP evolution of $\psi_f$, $\Delta Q(t)$,
+      $\delta n(x,t)$, and full densities with a TDVP-evolved or McWeeny (adiabatic) bulk (\S\ref{sec:td}).
+\end{enumerate}
+
+%======================================================================
+\section{Position basis states}\label{sec:basis}
+%======================================================================
+
+\begin{function}{to\_bits(n, L)}
+\begin{Verbatim}
+function to_bits(n::Integer, L::Integer)
+    return [parse(Int, c) for c in lpad(string(n; base=2), L, '0')]
+end
+\end{Verbatim}
+Returns the $L$-digit binary representation of $n$ as a \code{Vector\{Int\}}, most significant bit first.
+\code{string(n; base=2)} gives the binary string, \code{lpad} pads it with \code{'0'} on the left to length $L$,
+and each character is parsed to an integer. Callers pass \code{x - 1} to convert the 1-indexed site $x$ to
+$0,\dots,N-1$.
+\end{function}
+
+\begin{function}{basis\_state(sites, bits)}
+\begin{Verbatim}
+function basis_state(sites, bits::Vector{Int})
+    return MPS([onehot(sites[i] => bits[i] + 1) for i in eachindex(sites)])
+end
+\end{Verbatim}
+Builds the product MPS $\ket{b_0 b_1\dots b_L}$. \code{onehot(s => 1)} is $[1,0]=\ket{0}$ and
+\code{onehot(s => 2)} is $[0,1]=\ket{1}$; the \code{+1} converts bits to Julia's 1-based indices. The bond
+dimension is 1. Throughout the notebook it is called as
+\code{basis\_state(sites, vcat([nb], to\_bits(x - 1, L)))}, where the leading bit \code{nb} selects the Nambu
+sector (0 = particle, 1 = hole). It is the building block of \code{site\_weights}, \code{pbasis}, \code{pb},
+\code{pbt}, \code{hbt} and \code{bdg\_basis}.
+\end{function}
+
+%======================================================================
+\section{The fermion mode from the Majorana doublet}\label{sec:fermion}
+%======================================================================
+
+The markdown lists the procedure for ``good'' single-particle states:
+(1) find orthonormal $\{\psi_1,\psi_2\}$ spanning the near-zero subspace with DMRG;
+(2) localise the Majorana wavefunctions;
+(3) enforce self-conjugation $C\gamma=\gamma$;
+(4) pair the Majoranas into a fermion.
+
+\begin{function}{doublet(Hmpo, sites; η=1e-2, seed=1234, cutoff=1e-20)}
+\begin{Verbatim}
+K = TensorBinding.build_K(Hmpo, sites, 0.0, η; cutoff_K=cutoff)
+sw = (nsweeps=15, maxdim=[10, 20, 50, 100, 150], cutoff=cutoff,
+      noise=[1e-6, 1e-7, 1e-8, 0.0], outputlevel=0)
+Random.seed!(seed)
+_, ψ1 = dmrg(K, random_mps(sites; linkdims=10); sw...)
+_, ψ2 = dmrg(K, [ψ1], random_mps(sites; linkdims=10); weight=10.0, sw...)
+ψ1 /= norm(ψ1)
+ψ2 = add2(ψ2, -inner(ψ1, ψ2) * ψ1); ψ2 /= norm(ψ2)
+\end{Verbatim}
+\textbf{Computes} two orthonormal BdG states spanning the near-zero doublet of $H$.
+
+\textbf{Method.} The states with smallest $|E|$ are not the ground state of $H$, so DMRG is run on the positive
+operator
+\[
+  K = (H-\omega)^2 + \eta^2, \qquad \omega=0,
+\]
+built by \code{TensorBinding.build\_K} (from the package source: $H-\omega\mathbb 1$, squared with \code{apply}
+using \code{cutoff\_K} and the default \code{maxdim\_K = 200}, then $+\eta^2\mathbb 1$). Eigenvectors of $K$ are
+those of $H$, with eigenvalue $E^2+\eta^2$; the lowest two are the $\pm E$ doublet.
+
+\textbf{Role of $\eta$.} \code{build\_K} serves TensorBinding's spectral DMRG, where $K(\omega,\eta)$ is minimised at a
+chosen energy $\omega$ and $\eta$ is a broadening: $\min\langle K\rangle=\eta^2$ when $\omega$ hits an eigenvalue of $H$.
+Here only $\omega=0$ is used, and $\eta^2$ shifts every eigenvalue of $K$ by the same constant, so it changes neither the
+states DMRG finds nor its convergence (Krylov iterations are invariant under a constant shift). The notebook's comment
+records a check on the $\ell=6$ chain: with $\eta=0$, $E_{\text{mode}}$ and $E_{\text{bulk}}$ agree to all printed digits
+and the overlap of the two fermion modes is 1. \code{lowest\_bulk} subtracts $\eta^2$ again. The value $\eta=10^{-2}$ is
+kept for consistency with the MSH notebooks. \code{cutoff\_K} must stay small (here equal to \code{cutoff}): the package
+default $10^{-8}$ can truncate the $\eta^2$ term of the MPO.
+
+\textbf{DMRG runs.} The first DMRG gives $\psi_1$. The second DMRG adds a penalty of
+weight 10 against $\psi_1$ (ITensor's \code{dmrg(H, [ψ1], ψ0; weight)}), so it converges to the next eigenvector of
+$K$. A final Gram--Schmidt step removes any residual overlap with $\psi_1$.
+
+\textbf{Settings.} 15 sweeps; bond dimension ramped through 10, 20, 50, 100, 150; noise $10^{-6}\to10^{-8}\to0$;
+truncation cutoff $10^{-20}$; random initial MPS of bond dimension 10 with a fixed seed (1234) for reproducibility.
+
+\textbf{Returns} \code{(ψ1, ψ2)}. \textbf{Used by} \code{fermion\_mode}, \code{initial\_mode}, \code{final\_branches}.
+\end{function}
+
+\begin{function}{lowest\_bulk(Hmpo, sites, ψ1, ψ2; η=1e-2, seed=1234, cutoff=1e-20)}
+\begin{Verbatim}
+_, φ = dmrg(K, [ψ1, ψ2], random_mps(sites; linkdims=10); weight=10.0, sw...)
+φ = add2(φ, -inner(ψ1, φ) * ψ1); φ = add2(φ, -inner(ψ2, φ) * ψ2); φ /= norm(φ)
+return φ, sqrt(max(real(inner(φ', K, φ)) - η^2, 0.0))
+\end{Verbatim}
+\textbf{Computes} the lowest bulk state, i.e.\ the eigenstate with the next-smallest $|E|$ after the doublet (the
+bulk band edge), and its energy. It runs a third DMRG on the same $K$ and with the same sweep settings as
+\code{doublet}, penalised against both $\psi_1$ and $\psi_2$, then orthogonalises against them. The energy follows
+from $\langle K\rangle$:
+\[
+  |E_{\text{bulk}}| = \sqrt{\max(\bra{\varphi}K\ket{\varphi} - \eta^2,\,0)} .
+\]
+\textbf{Penalty weight.} The code comment states that the weight (10) must exceed $E_{\text{bulk}}^2+\eta^2$, which
+holds for $|E_{\text{bulk}}|<3$; otherwise the penalised doublet states would not lie above the bulk state in the
+penalised problem.
+
+\textbf{Returns} \code{(φ, |E\_bulk|)}. \textbf{Used by} \code{fermion\_mode} when \code{gap\_factor} is given.
+\end{function}
+
+\begin{function}{add2(a, b)}
+\begin{Verbatim}
+add2(a, b) = +(a, b; cutoff=1e-16)
+\end{Verbatim}
+MPS addition with truncation cutoff $10^{-16}$. All linear combinations of MPS in the notebook use it, so that sums
+are compressed without losing accuracy.
+\end{function}
+
+\begin{function}{fermion\_mode(Hmpo, sites, L; η=1e-2, seed=1234, cutoff=1e-20, gap\_factor=nothing)}
+\textbf{Computes} the BdG wavefunction of the ordinary fermion $\psi=(\gamma_L+i\gamma_R)/\sqrt2$ built from the two
+Majoranas, its energy, the Majoranas themselves, and optionally the bulk edge.
+
+\textbf{Step 1: doublet.} \code{ψ1, ψ2 = doublet(...)}.
+
+\textbf{Step 2: localisation.} DMRG returns an arbitrary basis of the doublet. The Majoranas are the combinations
+that diagonalise the position operator in that subspace. With the bit projector $\hat n_k = \ket{1}\bra{1}$ on
+position bit $k$ (MPS site $k+1$),
+\[
+  \hat x = \mathbb 1 + \sum_{k=1}^{L} 2^{L-k}\, \hat n_k ,
+  \qquad
+  S_{ab} = \langle\psi_a\vert\psi_b\rangle,\quad
+  X_{ab} = \bra{\psi_a}\hat x\ket{\psi_b}, \quad a,b\in\{1,2\}.
+\]
+\begin{Verbatim}
+nk(k) = ITensor([0.0 0.0; 0.0 1.0], sites[k+1]', sites[k+1])
+on_site(op, ψ, j) = (φ = copy(ψ); φ[j] = noprime(op * φ[j]); φ)
+S = [inner(a, b) for a in ψs, b in ψs]
+X = S + sum(2.0^(L - k) * [inner(a, on_site(nk(k), b, k + 1)) for a in ψs, b in ψs] for k in 1:L)
+F = eigen(Hermitian((X + X') / 2), Hermitian((S + S')/2))
+\end{Verbatim}
+The $S$ term supplies the $\mathbb 1$ in $\hat x$. The generalized Hermitian eigenproblem $Xc=\lambda Sc$ is solved
+(symmetrised to remove round-off). Eigenvalues are ascending, so column 1 (smaller $\langle x\rangle$) gives
+$\gamma_L$ and column 2 gives $\gamma_R$.
+
+\textbf{Step 3: self-conjugation.} Each combination carries an arbitrary phase: $C\gamma = e^{i\theta}\gamma$.
+\begin{Verbatim}
+τx_s = ITensor([0.0 1.0; 1.0 0.0], sites[1]', sites[1])   # Nambu is first index
+C(ψ) = (φ = dag(ψ); φ[1] = noprime(τx_s * φ[1]); φ)
+fix(γ) = exp(im * angle(inner(γ, C(γ))) / 2) * γ
+\end{Verbatim}
+With $\theta=\arg\langle\gamma\vert C\gamma\rangle$, the state $\gamma'=e^{i\theta/2}\gamma$ satisfies
+$C\gamma' = e^{-i\theta/2}e^{i\theta}\gamma = \gamma'$.
+
+\textbf{Step 4: pairing and branch choice.}
+\[
+  \psi = \frac{\gamma_L + i\gamma_R}{\lVert\gamma_L + i\gamma_R\rVert},\qquad E=\bra{\psi}H\ket{\psi},\qquad
+  \text{if } E<0:\ \psi\leftarrow C\psi,\ E\leftarrow -E .
+\]
+The comment notes that $\lVert\gamma_L+i\gamma_R\rVert^2=2$, so normalising before computing $E$ avoids getting $2E$.
+By convention $\ket{1}$ is the $+E$ state, so the returned $\psi$ is always the positive-energy member; $C\psi$ is its
+$-E$ partner.
+
+\textbf{Step 5: gap check (optional).} If \code{gap\_factor} is set, \code{lowest\_bulk} gives $|E_{\text{bulk}}|$,
+and a warning is issued if $|E_{\text{bulk}}| < \text{gap\_factor}\cdot E$, i.e.\ if the doublet does not sit well
+below the bulk. Otherwise \code{E\_bulk = NaN}.
+
+\textbf{Returns} \code{(ψ, E, γL, γR, E\_bulk)}. \textbf{Used} in cell 9 for the $\ell=6$ chain \code{H0} and inside
+\code{charge\_difference} and \code{charge\_difference\_method\_2}. The time-dependent part uses a copy without the
+energy and gap steps, \code{initial\_mode}.
+\end{function}
+
+\subsection{Static setup and profile helpers (cells 8--12)}
+
+Cell 8 defines \code{Lℓ = 6}, \code{Nℓ = 64}, \code{V\_in, V\_out = -1.0, -4.0} and
+\begin{Verbatim}
+region(ℓ) = ((Nℓ - ℓ) ÷ 2 + 1):((Nℓ - ℓ) ÷ 2 + ℓ)
+Vf(n) = (n + 1) in reg ? V_in : V_out
+\end{Verbatim}
+\code{region(ℓ)} is the centred range of $\ell$ 1-indexed sites. \code{Vf} receives the 0-indexed site from
+\code{add\_onsite!}, hence \code{n + 1}. The notebook sets \code{ℓ = 6}, so \code{reg = 30:35}: in \code{H0} the six sites
+$x=30\dots35$ are topological, with the Majoranas at the two ends of that region. Cell 9 calls \code{fermion\_mode(H0.mpo, H0.sites, Lℓ)}.
+
+\begin{function}{site\_weights(γ), C(ψ), τx\_s}
+\begin{Verbatim}
+site_weights(γ) = [sum(abs2(inner(basis_state(H0.sites, vcat([nb], to_bits(x - 1, H0.L))), γ)) for nb in 0:1)
+                   for x in 1:H0.N]
+\end{Verbatim}
+\code{site\_weights} returns $w(x) = |u(x)|^2+|v(x)|^2$ for $x=1,\dots,N$: the probability density of a BdG state
+summed over the Nambu index. It gives the profiles of $\gamma_L$, $\gamma_R$, $\psi$ and $\bar\psi=C\psi$ plotted in
+Figure~\ref{fig:majorana}. \code{τx\_s} and \code{C} in cell 10 are global copies of the particle--hole operator
+defined inside \code{fermion\_mode}.
+\end{function}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.49\textwidth]{cell11_1.png}\hfill
+\includegraphics[width=0.49\textwidth]{cell12_1.png}
+\caption{Left: $|\gamma_L(x)|^2$ and $|\gamma_R(x)|^2$ from \code{site\_weights}. Right: $|\psi(x)|^2$ for
+$(\gamma_L\pm i\gamma_R)/\sqrt2$, i.e.\ $\psi_f$ and $C\psi_f$, which have identical profiles. Both panels are for the
+notebook's \code{H0} with $\ell=6$ (sites 30--35 topological): $\gamma_L$ peaks at $x=30$ and $\gamma_R$ at $x=35$, the
+two ends of the topological region, and $\psi_f$ has weight at both.}
+\label{fig:majorana}
+\end{figure}
+
+%======================================================================
+\section{KPM local density of states and the gap estimate}\label{sec:kpm}
+%======================================================================
+
+\paragraph{LDOS call (cell 13).}
+\begin{Verbatim}
+Ncheb = 200; mdim = 60
+omega = range(-4.0, 4.0; length=1500)
+ldos = TensorBinding.get_ldos_spatial(H0, Ncheb, collect(omega); num_x=H0.N, mode=:mpo, kernel=:jackson,
+                                      maxdim=mdim, verbose=false)
+\end{Verbatim}
+The library routine computes the spatially resolved LDOS $A(x,\omega)$ with the kernel polynomial method (KPM):
+200 Chebyshev moments, MPO mode, bond dimension 60, on 1500 energies in $[-4,4]$ for all 64 sites. The printed log
+shows that the spectral bounds were estimated by DMRG ($E_{\min}=-5.990$, $E_{\max}=5.990$, scale $6.589$); the
+Hamiltonian is rescaled to $[-1,1]$ with these bounds. The Chebyshev moments are damped with the Jackson kernel
+(the library default, written out in the call; Lorentz, Fej\'er and Dirichlet kernels are the alternatives); see
+Weiße \emph{et al.}, Rev.\ Mod.\ Phys.\ \textbf{78}, 275 (2006). Because \code{H0} has a Nambu index, the library
+switches the Nambu projection on automatically (printed info line); with the sector selector \code{proj\_nambu} left
+at \code{nothing} it sums the particle and hole sectors, so
+$A(x,\omega)=\sum_n\bigl(|u_n(x)|^2+|v_n(x)|^2\bigr)\,\delta_{\text{KPM}}(\omega-E_n)$, symmetric in $\omega$. The
+result is a matrix with one row per energy and one column per site; it is plotted in Figure~\ref{fig:ldos}.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.62\textwidth]{cell13_1.png}
+\caption{KPM LDOS $A(x,\omega)$ of \code{H0} ($\ell=6$). The near-zero pair ($E_{\text{mode}}=0.019$) appears at
+$x=30$ and $x=35$, the ends of the topological region; states of the region itself lie at $|\omega|\gtrsim1.2$, and the
+bulk bands of the trivial chain start near $|\omega|\approx2$.}
+\label{fig:ldos}
+\end{figure}
+
+\begin{function}{kpm\_gap(ldos, omega, E\_mode; mode\_width=0.3)}
+\begin{Verbatim}
+ω = collect(omega)
+dos = vec(sum(ldos; dims=2))
+D(w) = (dos[argmin(abs.(ω .- w))] + dos[argmin(abs.(ω .+ w))]) / 2
+ws = ω[ω .> abs(E_mode) + mode_width]
+Ds = D.(ws)
+noise = 0.1 * maximum(Ds)
+j = findfirst(k -> Ds[k] > noise && Ds[k] >= Ds[k+1], 1:length(Ds)-1)     # first bulk peak
+half = Ds[j] / 2
+i = findlast(k -> Ds[k] < half, 1:j)                                       # rising flank
+return ws[i] + (half - Ds[i]) * (ws[i+1] - ws[i]) / (Ds[i+1] - Ds[i])
+\end{Verbatim}
+\textbf{Computes} the bulk gap edge $E_{\text{gap}}$ from the KPM LDOS.
+
+\textbf{Method.}
+\begin{enumerate}
+\item Total DOS: $\mathrm{DOS}(\omega)=\sum_x A(x,\omega)$, symmetrised as
+      $D(w)=[\mathrm{DOS}(w)+\mathrm{DOS}(-w)]/2$ (BdG symmetry), evaluated on the nearest grid points.
+\item Only energies $w > |E_{\text{mode}}| + \text{mode\_width}$ are kept, so the mode's own peak is not mistaken for
+      the band edge. The comment sets \code{mode\_width} $\approx 3\times$ the KPM resolution
+      $\pi\cdot\text{scale}/N_{\text{cheb}}\approx 0.1$.
+\item The first bulk peak is the first local maximum ($D_k\ge D_{k+1}$) above a noise floor of $10\%$ of the maximum.
+\item $E_{\text{gap}}$ is the half-maximum point on the rising flank of that peak, found by linear interpolation
+      between the last grid point below half maximum and the next one.
+\end{enumerate}
+The half-maximum is used because, per the comment, the KPM-broadened peak sits about 0.1 above the true edge.
+
+\textbf{Returns} $E_{\text{gap}}$ (a \code{Float64}). \textbf{Used} in cell 16 to set the Fermi level. For \code{H0}
+it gives $E_{\text{gap}}=1.154$; the DMRG value from \code{lowest\_bulk} for the same chain ($\ell=6$ in the sweep of
+\S\ref{sec:dq}) is $1.275$.
+\end{function}
+
+%======================================================================
+\section{Bulk projector and logical states}\label{sec:gamma}
+%======================================================================
+
+Cell 16 builds $P_{\text{bulk}}$, $\Gamma_0$ and $\Gamma_1$ as MPOs and checks them. It defines no named function
+apart from two one-line helpers (\code{Cop}, \code{pbasis}); the steps are described in order.
+
+\paragraph{Fermi level.} $P_{\text{bulk}}$ must contain all negative-energy bulk states and neither member of the
+$\pm E$ mode. The Fermi level is therefore placed midway in the window between the bulk edge and the lower member of
+the mode:
+\[
+  \epsilon_F = -\frac{E_{\text{mode}} + E_{\text{gap}}}{2},
+\]
+with $E_{\text{mode}}$ the energy returned by \code{fermion\_mode} and $E_{\text{gap}}$ from \code{kpm\_gap}. Printed:
+$E_{\text{mode}}=0.018763$, $E_{\text{gap}}=1.15365$, $\epsilon_F=-0.58621$.
+
+\paragraph{McWeeny purification.}
+\begin{Verbatim}
+ρ_bulk = TensorBinding.mcweeny_purify(H0; ϵF=ϵF, maxiters=60, maxdim=200, cutoff=1e-20, tol=1e-8)
+\end{Verbatim}
+McWeeny purification iterates $\rho\to3\rho^2-2\rho^3$, which sends eigenvalues above $\tfrac12$ to 1 and those below
+to 0 (the comment in \code{mcweeny\_bulk}, \S\ref{sec:td}). Starting from a linear guess in $H$ whose eigenvalues
+exceed $\tfrac12$ exactly for $E<\epsilon_F$, the result is the projector
+$P_{\text{bulk}}=\sum_{\text{bulk }E_n<0}\ket{\psi_n}\bra{\psi_n}$. From the package source, the
+\code{TBHamiltonian} method uses the initial guess
+$\rho_0 = \bigl(\tfrac12 + \tfrac{\epsilon_F+\text{center}}{2\,\text{scale}}\bigr)\mathbb 1 - \tfrac{H}{2\,\text{scale}}$
+with the Hamiltonian's stored KPM \code{center} and \code{scale}.
+
+\textbf{Accuracy settings.} The markdown states that accuracy needs \code{cutoff=1e-20} and \code{tol=1e-8}. With
+looser settings, or by iterating past convergence, $P_{\text{bulk}}$ drifts to an error of about $10^{-5}$, because
+McWeeny does not correct errors that mix occupied and empty states, so they accumulate.
+
+\paragraph{Logical states.}
+\begin{Verbatim}
+τx = ITensor([0.0 1.0; 1.0 0.0], H0.sites[1]', H0.sites[1])
+Cop(ψ) = (φ = dag(ψ); φ[1] = noprime(τx * φ[1]); φ)
+psi_bar = Cop(psi)
+Γ0 = +(ρ_bulk, outer(psi_bar', psi_bar); cutoff=1e-20)
+Γ1 = +(ρ_bulk, outer(psi', psi); cutoff=1e-20)
+\end{Verbatim}
+\code{Cop} is again $C=\tau_xK$. \code{outer(ψ', ψ)} is the rank-one MPO $\ket{\psi}\bra{\psi}$.
+
+\paragraph{Checks (printed).}
+\begin{itemize}
+\item $\Tr P_{\text{bulk}} = 62.999999999993$, equal to the rank $N-1=63$ expected for the projector.
+\item Mode occupation $\bra{\psi}\Gamma\ket{\psi}$: $9.0\times10^{-13}$ for $\ket{0}$, $1.0000000000009$ for $\ket{1}$.
+      $\bra{\bar\psi}\Gamma\ket{\bar\psi}$: $0.99999999999997$ for $\ket{0}$, $-1.7\times10^{-14}$ for $\ket{1}$.
+\item Many-body energies $E_{0,1}=\tfrac12\Tr(H\Gamma_{0,1})$ (up to a constant), evaluated exactly as
+      \code{inner(H0.mpo, Γ)/2} since \code{inner(A,B)} $=\Tr(A^\dagger B)$:
+      $E_1-E_0 = 0.0187632080507$, compared with $E=0.0187632080507$ from \code{fermion\_mode}. The comment notes
+      that this difference is small only when the MZMs are far apart; here $\ell=6$.
+\end{itemize}
+
+\begin{function}{pbasis(x)}
+\begin{Verbatim}
+pbasis(x) = basis_state(H0.sites, vcat([0], to_bits(x - 1, H0.L)))
+n0 = [real(inner(pbasis(x)', Γ0, pbasis(x))) for x in 1:H0.N]
+\end{Verbatim}
+The particle-sector basis state at site $x$ (the BdG vector of $c_x$). It is used to read the densities
+$n_{0,1}(x)=\langle 0,x\vert\Gamma_{0,1}\vert 0,x\rangle$ shown in Figure~\ref{fig:dens}. A code comment notes that
+the difference $\delta n$ should be computed directly from $\psi_f$, Eq.~\eqref{eq:dq}, rather than by subtracting two
+purified MPOs.
+\end{function}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.6\textwidth]{cell16_1.png}
+\caption{Local densities $n_0(x)$ and $n_1(x)$ of the two logical states of \code{H0} ($\ell=6$). They differ only
+in the topological region $x=30\dots35$; the total difference is $\Delta Q=-0.105$ (the $\ell=6$ entry of
+\S\ref{sec:dq}).}
+\label{fig:dens}
+\end{figure}
+
+%======================================================================
+\section{Charge difference versus length of the topological region}\label{sec:dq}
+%======================================================================
+
+One topological region ($V=-1$) of length $\ell$ is centred in the 64-site chain, with $V=-4$ elsewhere. The MZMs sit
+at the two ends of the region, so shrinking $\ell$ pushes them together. For each $\ell$ the code comment lists the
+pipeline: zero-mode pair from penalized DMRG on $K$ $\to$ gap check (third DMRG) $\to$ localise with $\hat X$ $\to$
+self-conjugate $\gamma$ $\to$ pair into $\psi_f$ $\to$ keep the $+E$ member $\to$ $\Delta Q=\bra{\psi_f}\tau_z\ket{\psi_f}$.
+Cell 18 repeats the definitions of \code{Lℓ}, \code{Nℓ}, \code{V\_in}, \code{V\_out} and \code{region}.
+
+\begin{function}{τz\_on(ψ, s), ΔQ\_mode(ψ, s)}
+\begin{Verbatim}
+τz_on(ψ, s) = (φ = copy(ψ); φ[1] = noprime(ITensor([1.0 0.0; 0.0 -1.0], s[1]', s[1]) * φ[1]); φ)
+ΔQ_mode(ψ, s) = real(inner(ψ, τz_on(ψ, s)))
+\end{Verbatim}
+\code{τz\_on} applies $\tau_z$ to the Nambu site. \code{ΔQ\_mode} returns
+$\bra{\psi}\tau_z\ket{\psi}=\sum_x(|u(x)|^2-|v(x)|^2)$, which for $\psi=\psi_f$ is the charge difference
+$\Delta Q$ of Eq.~\eqref{eq:dq}. The site list \code{s} only supplies the Nambu index. Since $C$ maps
+$(u,v)\to(v^*,u^*)$, $\Delta Q(C\psi)=-\Delta Q(\psi)$. Used by \code{charge\_difference} and throughout the
+time-dependent section.
+\end{function}
+
+\begin{function}{charge\_difference(ℓ; η=1e-2, seed=1234, cutoff=1e-20, gap\_factor=2.0)}
+\begin{Verbatim}
+reg = region(ℓ)
+Vf(n) = (n + 1) in reg ? V_in : V_out
+H = TensorBinding.get_Hamiltonian("chain_1d", 1.0; L = Lℓ)
+TensorBinding.add_onsite!(H, Vf); TensorBinding.add_superconductivity!(H, 1.0)
+pb(x) = basis_state(s, vcat([0], to_bits(x - 1, Lℓ)))
+onsite_err = maximum(abs(real(inner(pb(x)', H.mpo, pb(x))) - Vf(x - 1)) for x in 1:Nℓ)
+onsite_err > 1e-6 && @warn "ℓ = $ℓ: on-site potential of H deviates from Vf by $onsite_err"
+psi, E, γL, γR, E_bulk = fermion_mode(H.mpo, s, Lℓ; η=η, seed=seed, cutoff=cutoff, gap_factor=gap_factor)
+return (ΔQ = ΔQ_mode(psi, s), E = E, E_bulk = E_bulk, psi = psi, s = s)
+\end{Verbatim}
+\textbf{Method 1.} Builds the Hamiltonian for region length $\ell$, checks that the diagonal particle element of the
+MPO reproduces $V(x)$ at every site to $10^{-6}$ (the MPO of the on-site term is compressed by the library), calls
+\code{fermion\_mode} with the gap check enabled (\code{gap\_factor = 2}: warn if $|E_{\text{bulk}}|<2E$), and returns
+a named tuple $(\Delta Q, E, E_{\text{bulk}}, \psi_f, s)$ with $\Delta Q$ for the $+E$ member ($\ket{1}$). The
+mode \code{psi} and its site list \code{s} are kept so that \code{charge\_difference\_method\_2} can reuse them.
+
+\textbf{Used} in cell 20 for $\ell = 1,\dots,40$; the cell prints the table $(\ell,\Delta Q,E,|E_{\text{bulk}}|)$
+of \S\ref{sec:results}. Apart from that table the output contains only the library's $p$-wave info lines, no on-site
+or gap-check warnings.
+\end{function}
+
+\begin{function}{charge\_difference\_method\_2(r)}
+\begin{Verbatim}
+psi, s = r.psi, r.s
+psibar = C(psi)
+upart(ψ) = [abs2(inner(pb(x),ψ)) for x in 1:Nℓ]
+n_density = upart(psi) - upart(psibar)
+charge_diff = sum(n_density)
+\end{Verbatim}
+\textbf{Method 2.} Takes the entry \code{r} of the $\ell$ sweep (\code{sweep\_ℓ}), i.e.\ the same DMRG mode $\psi_f$
+as method 1, so no second DMRG is run, and evaluates
+$\Delta Q$ as the sum of the density difference read off the projectors,
+$\delta n(x)=|u_f(x)|^2-|u_{\bar f}(x)|^2$ with $\bar\psi_f=C\psi_f$ (the comment calls this ``using projectors
+$\Gamma_0$ and $\Gamma_1$''; the bulk cancels, so only $\psi_f$ and $C\psi_f$ enter). By Eq.~\eqref{eq:dq} it equals
+method 1 analytically: $u_{\bar f}=v_f^*$, so $\sum_x(|u_f|^2-|u_{\bar f}|^2)=\bra{\psi_f}\tau_z\ket{\psi_f}$. Method 2
+is therefore an independent evaluation of the same number. It returns a single number. Used in cell 24 for every
+entry of the sweep; the cell prints $\max_\ell|\Delta Q_\ell^{(1)}-\Delta Q_\ell^{(2)}| = 5.6\times10^{-16}$, and the
+two curves coincide in Figure~\ref{fig:dql}.
+\end{function}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.62\textwidth]{cell25_1.png}
+\caption{$|\Delta Q|$ (units of $-e$) versus the topological region length $\ell$, axis reversed so that the MZMs
+approach each other from left to right. Method 1 (\code{charge\_difference}) and method 2
+(\code{charge\_difference\_method\_2}, dashed) are plotted on top of each other and agree to $6\times10^{-16}$.}
+\label{fig:dql}
+\end{figure}
+
+%======================================================================
+\section{Time-dependent ramp}\label{sec:td}
+%======================================================================
+
+\subsection{Protocol}
+From the markdown: at $t=0$ the 32-site chain ($L_t=5$) is topological ($\mu_{\text{topo}}=-0.4$) with MZMs at its
+ends. Sites are ramped to $\mu_{\text{triv}}=-5.6$ from the chain ends inward, each with a small delay, which carries
+the MZMs to the middle. At $t=T$ only the centre site ($\ell_{\text{center}}=1$, $x=16$) is topological, so the two
+MZMs overlap and the logical states differ in charge.
+\[
+  \mu(x,t) = \mu_{\text{topo}} + (\mu_{\text{triv}}-\mu_{\text{topo}})\,s\bigl(q_i(t)\bigr),\qquad
+  q_i(t) = \frac tT\bigl[1+\alpha(N_{\text{leg}}-1)\bigr]-\alpha i,\qquad
+  s(\tau)=3\tau^2-2\tau^3 ,
+\]
+with $i$ the distance of $x$ from the nearest chain end, $\alpha=0.025$ and $s$ clamped to $[0,1]$. The
+$N_t-\ell_{\text{center}}=31$ ramped sites cannot split evenly: the left leg has 15 sites ($x=1\dots15$), the right leg 16
+($x=17\dots32$), and $N_{\text{leg}}=16$ is the longer leg.
+\begin{itemize}
+\item Site-delayed ramp: site $i$ starts at $t=\alpha iT/[1+\alpha(N_{\text{leg}}-1)]$ and ramps over the duration
+      $T/[1+\alpha(N_{\text{leg}}-1)]$; the trivial region grows inward from both ends at the same rate. The innermost site
+      of the right leg ($i=15$) finishes at $t=T$, that of the left leg ($i=14$) at $t/T=(1+14\alpha)/(1+15\alpha)\approx0.98$.
+\item A uniform ramp would cross $|\mu|=2t$ everywhere at once and close the bulk gap. With the delay the instantaneous
+      bulk gap stays $\ge0.83$ (minimum near $t/T\approx0.43$).
+\item The smoothstep starts and stops with zero velocity.
+\end{itemize}
+\textbf{What is evolved.} $\Gamma_1(t)-\Gamma_0(t) = \ket{\psi_f}\bra{\psi_f}-\ket{C\psi_f}\bra{C\psi_f}$ at all times,
+so $\Delta Q(t)=\bra{\psi_f(t)}\tau_z\ket{\psi_f(t)}$ needs only the single BdG vector $\psi_f$, evolved with
+$i\partial_t\psi=H(t)\psi$ by TDVP. At $t=T$ the weight of $\psi_f$ outside the instantaneous $\pm E$ doublet is the
+leakage into bulk quasiparticles (the non-adiabatic error). Full densities add the shared bulk, either TDVP-evolved
+(all $N_t-1$ filled states) or the adiabatic McWeeny projector of $H(t)$.
+
+\subsection{Initial mode and final branches (cell 27)}
+
+\begin{function}{C\_t(ψ)}
+\begin{Verbatim}
+C_t(ψ) = (φ = dag(ψ); s = siteind(φ, 1); φ[1] = noprime(ITensor([0.0 1.0; 1.0 0.0], s', s) * φ[1]); φ)
+\end{Verbatim}
+Particle--hole conjugation $C=\tau_xK$ that reads the Nambu index from the MPS's own first site, so it does not
+depend on a global site list. The comment states that the functions of this cell work for any chain length and read
+no globals.
+\end{function}
+
+\begin{function}{initial\_mode(Hmpo, sites, L)}
+Same as steps 1--4 of \code{fermion\_mode}: \code{doublet}, localisation with $\hat X$, \code{fix} for
+$C\gamma=\gamma$ (using \code{C\_t}), and $\psi=(\gamma_L+i\gamma_R)/\lVert\cdot\rVert$. Differences: it uses the
+ordinary eigenproblem \code{eigen(Hermitian((X + X') / 2))} (the doublet is already orthonormal, so $S=\mathbb 1$ up
+to round-off), it does not compute $E$ and does not choose the $+E$ branch, and it uses the default
+$\eta$, seed and cutoff of \code{doublet}. Returns the normalised $\psi$.
+
+Used once (cell 29): \code{ψf\_init = initial\_mode(H\_of\_t\_alt(0.0, 1.0, smoothstep), st, Lt)}; $H(0)$ is the same
+for every $T$ and ramp. Printed checks: $\lVert H\psi\rVert = 1.12\times10^{-12}$ (the MZMs at the ends of the
+32-site topological chain are at zero energy to this precision) and $\Delta Q(0)=4.6\times10^{-15}$.
+\end{function}
+
+\begin{function}{final\_branches(Hmpo, sites)}
+\begin{Verbatim}
+ψ1, ψ2 = doublet(Hmpo, sites)
+Hm = [inner(a', Hmpo, b) for a in ψs, b in ψs]
+F = eigen(Hermitian((Hm + Hm') / 2))
+mk(c) = add2(c[1] * ψ1, c[2] * ψ2)
+return mk(F.vectors[:, 2]), mk(F.vectors[:, 1]), F.values[2]    # ψ₊, ψ₋, E₊
+\end{Verbatim}
+Instantaneous $\pm E$ eigenstates at the end of the ramp. The $2\times2$ matrix of $H$ in the doublet is
+diagonalised; the comment notes that $E$ is large at $t=T$, so $H$ itself separates the two states (no localisation
+is needed). Returns $(\psi_+,\psi_-,E_+)$. Used by \code{run\_ramp}, \code{evolve\_states} and
+\code{evolve\_states\_single\_modes} to project the evolved state and to identify which logical state ended in $+E$.
+\end{function}
+
+\subsection{Time-dependent Hamiltonian (cell 28)}
+
+\begin{function}{smoothstep(τ)}
+\begin{Verbatim}
+smoothstep(τ) = τ <= 0 ? 0.0 : τ >= 1 ? 1.0 : τ^2 * (3 - 2τ)
+\end{Verbatim}
+$s(\tau)=3\tau^2-2\tau^3$ clamped to $[0,1]$; $s'(0)=s'(1)=0$.
+\end{function}
+
+\begin{function}{mu\_xt(x, t, T, ramp; α = alpha)}
+\begin{Verbatim}
+ℓ_center = 1                              # sites kept topological in the middle
+N_left  = (Nt - ℓ_center) ÷ 2             # 15 ramped sites on the left  (x = 1 … 15)
+N_right = Nt - ℓ_center - N_left          # 16 ramped sites on the right (x = 17 … 32)
+N_leg   = max(N_left, N_right)            # 16
+function mu_xt(x, t, T, ramp; α = alpha)
+    (x <= N_left || x > Nt - N_right) || return μ_topo_t
+    i = min(x - 1, Nt - x)
+    q = (t/T) * (1 + α * (N_leg - 1)) - α * i
+    return μ_topo_t + (μ_triv_t - μ_topo_t) * ramp(q)
+end
+\end{Verbatim}
+Implements $\mu(x,t)$ of the protocol ($\ell_{\text{center}}=1$, \code{Nt = 32}, $\alpha=0.025$). A site is ramped if it
+lies in the left leg ($x\le$ \code{N\_left}) or the right leg ($x>N_t-$ \code{N\_right}); its delay index is the
+distance from the nearer chain end, $i=\min(x-1,N_t-x)$, so the two walls move inward at the same rate. With
+$\ell_{\text{center}}=1$ the 31 ramped sites split into 15 (left, $i=0..14$) and 16 (right, $i=0..15$), and
+$N_{\text{leg}}=\max(15,16)=16$ makes the innermost site of the longer leg finish exactly at $t=T$; site 16 is never
+ramped. The same function works for even $\ell_{\text{center}}$ (equal legs). The argument \code{ramp} is the profile
+function (\code{smoothstep}).
+\end{function}
+
+\begin{function}{onsite\_mpo(V)}
+\begin{Verbatim}
+function onsite_mpo(V)
+    arr = zeros(ntuple(_ -> 2, Lt)...)
+    for I in CartesianIndices(arr)
+        b = Tuple(I) .- 1   # position bits, most significant first
+        arr[I] = V(1 + sum(b[k] * 2^(Lt - k) for k in 1:Lt))
+    end
+    D = TensorBinding.mps_to_diagonal_mpo(MPS(arr, pos_t; cutoff=1e-16), pos_t)
+    return TensorBinding.prepend_nambu(D, nambu_t, :tz)
+end
+\end{Verbatim}
+Builds the exact on-site MPO $\tau_z\otimes\operatorname{diag}V(x)$ from the $N_t$ values $V(x)$. The values are
+written into a dense $2\times\dots\times2$ array indexed by the position bits, compressed to an MPS on the position
+sites (\code{pos\_t = st[2:end]}) with cutoff $10^{-16}$, turned into a diagonal MPO, and given the Nambu structure
+$\tau_z$ on \code{nambu\_t = st[1]}. Per the comment, this avoids rebuilding the whole Hamiltonian (and running QTCI)
+at every time step.
+\end{function}
+
+\begin{function}{H\_of\_t\_alt(t, T, ramp), pbt(x)}
+\begin{Verbatim}
+H_of_t_alt(t, T, ramp) = +(H_static.mpo, onsite_mpo(x -> mu_xt(x, t, T, ramp)); cutoff=1e-16)
+pbt(x) = basis_state(st, vcat([0], to_bits(x - 1, Lt)))
+\end{Verbatim}
+$H(t) = H_{\text{static}} + \tau_z\otimes\operatorname{diag}\mu(x,t)$, where \code{H\_static} (hopping and pairing,
+no on-site term) is built once with \code{get\_Hamiltonian("chain\_1d", 1.0; L = Lt)} and
+\code{add\_superconductivity!(H\_static, 1.0)}; \code{st = H\_static.sites}. \code{pbt(x)} is the particle-sector
+basis state at $x$. Cell 28 checks $\max_x|\langle0,x|H|0,x\rangle-\mu(x,t)|$ for $T=80$:
+\begin{center}
+\begin{tabular}{@{}rcc@{}}
+\toprule
+$t$ & max on-site error & \code{maxlinkdim(H)} \\
+\midrule
+0  & $1.8\times10^{-15}$ & 5 \\
+40 & $3.4\times10^{-14}$ & 8 \\
+80 & $1.1\times10^{-14}$ & 6 \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{function}
+
+\begin{function}{norm\_Hψ(H, ψ)}
+\begin{Verbatim}
+norm_Hψ(H, ψ) = norm(orthogonalize(apply(H, ψ; alg="naive", truncate=false), 1)[1])
+\end{Verbatim}
+$\lVert H\psi\rVert$ computed without truncation: $H\psi$ is formed exactly, brought to orthogonality centre 1, and the
+norm of the first tensor is the norm of the MPS. Used once to check $\psi_f(0)$.
+\end{function}
+
+\subsection{Evolution of the fermion mode}
+
+\begin{function}{run\_ramp(T, ramp; dt=0.1, nsnap=100)}
+\begin{Verbatim}
+nsteps = round(Int, T / dt); dt = T / nsteps
+states = TensorBinding.evolve_with_tdvp_timedep(t -> H_of_t_alt(t, T, ramp), ψf_init, nsteps, dt;
+                                                maxdim=64, cutoff=1e-20, tol=1e-12, krylovdim=30,
+                                                reverse_step=true)
+ψ₊, ψ₋, E₊ = final_branches(H_of_t_alt(T, T, ramp), st)
+ψT = states[end]
+p₊, p₋ = abs2(inner(ψ₊, ψT)), abs2(inner(ψ₋, ψT))
+σ = p₋ > p₊ ? -1 : 1
+σ == -1 && ((p₊, p₋) = (p₋, p₊))
+idx = unique(round.(Int, range(1, nsteps + 1; length=nsnap + 1)))
+return (T = T, leak = 1 - p₊ - p₋, p_wrong = p₋, E₊ = E₊,
+        ΔQ_final = σ * ΔQ_mode(ψT, st), ΔQ_adiabatic = ΔQ_mode(ψ₊, st),
+        times = (idx .- 1) .* dt, ΔQ_t = [σ * ΔQ_mode(states[i], st) for i in idx], snapshots = states[idx])
+\end{Verbatim}
+\textbf{Computes} the evolution $i\partial_t\ket{\psi(t)}=H(t)\ket{\psi(t)}$ of $\psi_f(0)$ from $0$ to $T$ and the
+resulting non-adiabatic error and $\Delta Q(t)$.
+
+\textbf{Time stepping.} \code{dt} is adjusted so that \code{nsteps*dt = T}. From the package source, the routine
+\code{evolve\_with\_tdvp\_timedep}\linebreak[3] evaluates $H$ at the step midpoint $t_{\text{mid}}=(k-\tfrac12)\,dt$, uses two-site
+TDVP by default (\code{nsite = 2}), normalises after each step by default, and returns all \code{nsteps+1} states.
+The notebook sets \code{maxdim = 64}, \code{cutoff = 1e-20}, Krylov tolerance $10^{-12}$ with Krylov dimension 30,
+and \code{reverse\_step = true} (the comment: a sweep consists of a forward and a backward pass through the MPS).
+
+\textbf{Analysis.}
+\begin{itemize}
+\item $p_\pm = |\langle\psi_\pm\vert\psi(T)\rangle|^2$ with the instantaneous branches from \code{final\_branches}.
+\item Branch identification: if the state ended mainly in $\psi_-$, then $\sigma=-1$ and $p_\pm$ are swapped. Since
+      $\Delta Q(C\psi)=-\Delta Q(\psi)$, multiplying by $\sigma$ reports $\Delta Q$ for the logical state that ends in
+      $+E$ ($\ket{1}$).
+\item \code{leak} $=1-p_+-p_-$: the probability transferred into bulk quasiparticles.
+      \code{p\_wrong} $=p_-$ after the swap: the weight in the other branch.
+\item \code{ΔQ\_final} $=\sigma\Delta Q(\psi(T))$; \code{ΔQ\_adiabatic} $=\Delta Q(\psi_+)$, the adiabatic value.
+\item \code{times}, \code{ΔQ\_t}, \code{snapshots}: \code{nsnap+1} (after \code{unique}) roughly equally spaced
+      samples.
+\end{itemize}
+\textbf{Used} in cell 31 for $T=150,200,250,300,350$, which prints \code{leak}, \code{p\_wrong}, \code{ΔQ\_final},
+\code{ΔQ\_adiabatic} and their difference (results in \S\ref{sec:results}), and in cell 32 (Figure~\ref{fig:dqt}).
+\end{function}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.6\textwidth]{cell32_1.png}
+\caption{$\Delta Q(t)$ of the evolved $\psi_f$ for the smoothstep ramp with $T=350$ (\code{run\_ramp}). $\Delta Q$
+stays at zero while the MZMs are far apart and goes to $-0.889$ as they fuse at the centre. Dashed: the adiabatic
+value \code{ΔQ\_adiabatic} $=\Delta Q(\psi_+)=-0.889108$ of the final instantaneous mode.}
+\label{fig:dqt}
+\end{figure}
+
+\begin{function}{evolve\_states(T, ramp; dt=0.1, nsnap=160)}
+\textbf{Computes} $\delta n(x,t)=n_1(x,t)-n_0(x,t)=|u_f(x,t)|^2-|u_{\bar f}(x,t)|^2$ for both logical states.
+\begin{Verbatim}
+s1, s0 = ev(ψf_init), ev(C_t(ψf_init))
+ψ₊, _, _ = final_branches(H_of_t_alt(T, T, ramp), st)
+abs2(inner(ψ₊, s0[end])) > abs2(inner(ψ₊, s1[end])) && ((s1, s0) = (s0, s1))   # |1⟩: mode ends in +E
+upart(ψ) = [abs2(inner(pbt(x), ψ)) for x in 1:Nt]
+δn = reduce(hcat, [upart(s1[i]) .- upart(s0[i]) for i in idx])
+return (T = T, times = (idx .- 1) .* dt, δn = δn,
+        C_err = norm(add2(C_t(s1[end]), -1 * s0[end])),
+        n_mode = (abs2(inner(ψ₊, s1[end])), abs2(inner(ψ₊, s0[end]))))
+\end{Verbatim}
+\textbf{Method.} Both $\psi_f$ and $\bar\psi_f=C\psi_f$ are evolved by TDVP with the settings of \code{run\_ramp}. The
+one whose final state has more weight on $\psi_+$ is labelled $\ket{1}$. Per the comments: the bulk cancels exactly in
+$\Gamma_1-\Gamma_0$, and evolving and subtracting the two full $\Gamma$ MPOs would bury $\delta n$ (about $10^{-14}$
+early on) under truncation error; $\bar\psi_f$ is evolved independently rather than taken as $C\psi_f(t)$, so that
+$\lVert C\psi_f(T)-\bar\psi_f(T)\rVert$ (\code{C\_err}) checks the evolution. \code{n\_mode} holds the weights of
+the two final states on $\psi_+$.
+
+\textbf{Returns} \code{(T, times, δn, C\_err, n\_mode)}, with \code{δn} an $N_t\times n_{\text{snap}}$ matrix.
+\textbf{Used} in cell 33 for $T=300$ and $T=100$ (Figure~\ref{fig:dnxt}); the cell prints \code{C\_err} and
+\code{n\_mode} for both runs (\S\ref{sec:results}).
+\end{function}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.85\textwidth]{cell34_1.png}
+\caption{Top: $\delta n(x,t)=n_1-n_0$ for $T=300$ and $T=100$ (\code{evolve\_states}). The density difference
+appears at the centre site $x=16$ once the MZMs come together. Bottom: $\Delta Q(t)=\sum_x\delta n(x,t)$ versus $t/T$;
+the two ramp durations give almost the same curve, ending near $-0.89$.}
+\label{fig:dnxt}
+\end{figure}
+
+\subsection{Bulk states and full densities (cells 35--39)}
+
+\begin{function}{bdg\_basis, dense\_bdg(Hmpo), hbt(x)}
+\begin{Verbatim}
+bdg_basis = [basis_state(st, vcat([nb], to_bits(x - 1, Lt))) for nb in 0:1 for x in 1:Nt]   # index nb·Nt + x
+dense_bdg(Hmpo) = [inner(a', Hmpo, b) for a in bdg_basis, b in bdg_basis]
+hbt(x) = basis_state(st, vcat([1], to_bits(x - 1, Lt)))
+\end{Verbatim}
+\code{bdg\_basis} lists the $2N_t=64$ BdG basis states, ordered as $(u_1,\dots,u_{N_t},v_1,\dots,v_{N_t})$, i.e.\
+index $n_b N_t + x$. \code{dense\_bdg} converts an MPO to the dense $2N_t\times2N_t$ BdG matrix by matrix elements.
+\code{hbt(x)} is the hole-sector basis state, used to read $|v(x)|^2$.
+
+\textbf{Convention check.} The cell also builds \code{Hs\_d = dense\_bdg(H\_static.mpo)} and compares it with the
+reference matrix $[h\ \Delta;\ \Delta^\dagger\ {-h^T}]$ of \S\ref{sec:model} (\code{h\_ref}, \code{Δ\_ref}); it prints
+$h_{12}=1$, $\Delta_{12}=1$, $\Delta_{21}=-1$, $\Delta_{11}=-1.9\times10^{-17}$ and a maximum deviation of $3.6\times10^{-15}$.
+\end{function}
+
+\begin{function}{vec\_to\_mps(c; cutoff=1e-16)}
+Inverse of the above: writes the dense BdG vector $c$ (ordering $n_bN_t+x$) into a $2^{L_t+1}$ complex array indexed
+by [Nambu bit, position bits] and compresses it into an MPS on \code{st} with cutoff $10^{-16}$.
+\end{function}
+
+\begin{function}{initial\_bulk\_states(Hmpo)}
+\begin{Verbatim}
+Hd = dense_bdg(Hmpo)
+F = eigen(Hermitian((Hd + Hd') / 2))
+doublet_idx = sortperm(abs.(F.values))[1:2]
+bulk_idx = [n for n in eachindex(F.values) if F.values[n] < 0 && n ∉ doublet_idx]
+@assert length(bulk_idx) == Nt - 1
+return [vec_to_mps(F.vectors[:, n]) for n in bulk_idx]
+\end{Verbatim}
+The filled bulk states at $t=0$: all negative-energy eigenstates of $H(0)$ except the near-zero doublet (the two
+smallest $|E|$), $N_t-1=31$ of them. For $N_t=32$ the BdG matrix is only $64\times64$, so the comment notes that exact
+diagonalisation is used and the eigenvectors are converted to MPS. Stored as \code{bulk\_init}. Printed check:
+$\lVert P_{\text{bulk}}\psi_f\rVert^2 = \sum_b|\langle b\vert\psi_f\rangle|^2 = 1.8\times10^{-25}$ at $t=0$.
+\end{function}
+
+\begin{function}{bulk\_density\_tdvp(T, ramp; dt=0.1, nsnap=160)}
+\begin{Verbatim}
+Hs = [H_of_t_alt((k - 0.5) * dt, T, ramp) for k in 1:nsteps]   # H at t_mid of step k
+Hoft(t) = Hs[round(Int, t / dt + 0.5)]
+...
+s = TensorBinding.evolve_with_tdvp_timedep(Hoft, b, nsteps, dt; maxdim=64, cutoff=1e-20, tol=1e-12,
+                                           krylovdim=30, reverse_step=true)
+n_bulk[:, j] .+= upart(s[i]);  v_bulk[:, j] .+= vpart(s[i])
+...
+G = [inner(a, b) for a in final, b in final]
+return (n_bulk = n_bulk, v_bulk = v_bulk, orth_err = maximum(abs, G - I))
+\end{Verbatim}
+\textbf{Computes} the evolved bulk density $n_{\text{bulk}}(x,t)=\sum_b|u_b(x,t)|^2$ by evolving each of the 31 bulk
+states with the same $H(t)$ and TDVP settings as $\psi_f$. $H(t_{\text{mid}})$ for every step is built once and shared
+by all states; \code{Hoft} maps the midpoint time $(k-\frac12)dt$ requested by the library back to index $k$. It also
+accumulates the hole weight $v_{\text{bulk}}(x,t)=\sum_b|v_b(x,t)|^2$ (for the completeness check) and returns the
+overlap error $\max_{mn}|\langle b_m\vert b_n\rangle-\delta_{mn}|$ of the final states, which should stay near zero.
+Samples are at the same snapshot indices as \code{evolve\_states\_single\_modes}.
+\end{function}
+
+\begin{function}{evolve\_states\_single\_modes(T, ramp; dt=0.1, nsnap=160)}
+Same evolution and $\ket{1}$ labelling as \code{evolve\_states}, but returns the two particle densities separately,
+\code{n\_pos} $=|u_f(x,t)|^2$ (state $\ket{1}$) and \code{n\_neg} $=|u_{\bar f}(x,t)|^2$ (state $\ket{0}$), together
+with \code{times}, \code{C\_err} and \code{n\_mode}. Used by \code{evolve\_full\_densities}.
+\end{function}
+
+\begin{function}{ramp\_fermi\_level(ramp; npts=401)}
+\begin{Verbatim}
+H_static_dense = dense_bdg(H_static.mpo)
+E = map(range(0, 1; length=npts)) do τ
+    μ = [mu_xt(x, τ, 1.0, ramp) for x in 1:Nt]
+    sort(abs.(eigvals(Hermitian(H_static_dense + Diagonal(vcat(μ, -μ))))))   # E[1] = E[2] = mode, E[3] = bulk edge
+end
+Em, Eg = maximum(e[1] for e in E), minimum(e[3] for e in E)
+Em < Eg || error("no single ϵF: max E_mode = $Em ≥ min E_gap = $Eg")
+return -(Em + Eg) / 2, Em, Eg, maximum(e[end] for e in E)
+\end{Verbatim}
+\textbf{Computes} one Fermi level valid for the whole ramp. Because $\mu(x,t)$ depends only on $t/T$, the
+instantaneous spectrum is scanned once over $t/T\in[0,1]$ (401 points) by exact diagonalisation of
+$H(t)=H_{\text{static}}+\tau_z\otimes\operatorname{diag}\mu(x,t)$, here \code{Diagonal(vcat(μ, -μ))} in the
+\code{bdg\_basis} ordering. $\epsilon_F$ must lie below $-E_{\text{mode}}(t)$ and above $-E_{\text{gap}}(t)$ at every
+$t$, so the worst cases are used:
+\[
+  \epsilon_F = -\frac{\max_t E_{\text{mode}}(t) + \min_t E_{\text{gap}}(t)}{2}.
+\]
+Returns $(\epsilon_F, \max_t E_{\text{mode}}, \min_t E_{\text{gap}}, \max|E|)$. Printed: $\max_tE_{\text{mode}}=0.34875$,
+$\min_tE_{\text{gap}}=0.82787$, window $(-0.82787,-0.34875)$, $\epsilon_F=-0.58831$, $\max|E|=7.5749$.
+\end{function}
+
+\begin{function}{mcweeny\_bulk(Hmpo; ϵF=ϵF\_ramp, scale=9.0, maxiters=80, maxdim=200, cutoff=1e-20, tol=1e-10)}
+\begin{Verbatim}
+Id = MPO(st, "Id")
+ρ0 = +((0.5 + ϵF / (2scale)) * Id, (-0.5 / scale) * Hmpo; cutoff=cutoff)
+ρ = TensorBinding.mcweeny_purify(ρ0; maxiters=maxiters, maxdim=maxdim, cutoff=cutoff, tol=tol)
+abs(real(tr(ρ)) - (Nt - 1)) > 1e-6 && @warn "Tr P_bulk = $(real(tr(ρ))), expected $(Nt - 1): check ϵF"
+return [real(inner(pbt(x)', ρ, pbt(x))) for x in 1:Nt]
+\end{Verbatim}
+\textbf{Computes} the instantaneous (adiabatic) bulk density $\langle0,x\vert P_{\text{bulk}}(t)\vert0,x\rangle$ for a
+given $H(t)$. The initial guess
+\[
+  \rho_0 = \tfrac12 - \frac{H-\epsilon_F}{2\,\text{scale}}
+\]
+has eigenvalues in $[0,1]$ when $\text{scale}\ge\max|E-\epsilon_F|$; the comment cites $\max|E|\approx7.6$, and
+scale $=9$ is used. McWeeny $\rho\to3\rho^2-2\rho^3$ drives eigenvalues above $\frac12$ (i.e.\ $E<\epsilon_F$) to 1 and
+the rest to 0, which gives $P_{\text{bulk}}(t)$ when $\epsilon_F$ lies between the bulk edge and the lower member of
+the doublet. A warning is issued if $\Tr\rho$ differs from $N_t-1$ by more than $10^{-6}$.
+\end{function}
+
+\begin{function}{bulk\_density\_mcweeny(T, ramp, times; kw...)}
+\begin{Verbatim}
+bulk_density_mcweeny(T, ramp, times; kw...) = reduce(hcat, [mcweeny_bulk(H_of_t_alt(t, T, ramp); kw...) for t in times])
+\end{Verbatim}
+Applies \code{mcweeny\_bulk} at each snapshot time and stacks the results into an $N_t\times n_{\text{snap}}$ matrix.
+\end{function}
+
+\begin{function}{evolve\_full\_densities(T, ramp; bulk=:tdvp, dt=0.1, nsnap=160)}
+\begin{Verbatim}
+m = evolve_states_single_modes(T, ramp; dt=dt, nsnap=nsnap)
+if bulk == :tdvp
+    b = bulk_density_tdvp(T, ramp; dt=dt, nsnap=nsnap)
+    compl_err = maximum(abs, b.n_bulk .+ b.v_bulk .+ m.n_pos .+ m.n_neg .- 1)
+elseif bulk == :mcweeny
+    n_bulk, orth_err, compl_err = bulk_density_mcweeny(T, ramp, m.times), NaN, NaN
+...
+return (T = T, times = m.times, n1 = n_bulk .+ m.n_pos, n0 = n_bulk .+ m.n_neg, n_bulk = n_bulk,
+        orth_err = orth_err, compl_err = compl_err, C_err = m.C_err, n_mode = m.n_mode)
+\end{Verbatim}
+\textbf{Computes} the full densities $n_1(x,t)=n_{\text{bulk}}+|u_f|^2$ and $n_0(x,t)=n_{\text{bulk}}+|u_{\bar f}|^2$,
+with the shared bulk either TDVP-evolved (\code{:tdvp}) or adiabatic (\code{:mcweeny}). For \code{:tdvp} the
+completeness error checks $\Gamma_1+C\Gamma_1C=\mathbb 1$, i.e.\ at every site
+\[
+  \sum_{\text{bulk}}\bigl(|u_b(x)|^2+|v_b(x)|^2\bigr)+|u_f(x)|^2+|v_f(x)|^2=1,
+\]
+using $|v_f|^2=|u_{\bar f}|^2$. Used in cell 39 with $T=100$ and \code{nsnap = 40} (Figure~\ref{fig:full}); the cell
+prints \code{orth\_err}, \code{compl\_err}, \code{C\_err}, \code{n\_mode} and the TDVP--McWeeny bulk difference.
+\end{function}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.92\textwidth]{cell40_1.png}
+\caption{Full densities for the smoothstep ramp with $T=100$ (\code{evolve\_full\_densities}, TDVP bulk). Top:
+$n_1(x,t)$ and $n_0(x,t)$. Bottom left: $n_{\text{bulk}}(x,t)$ from TDVP. The trivial region (density near 1) grows
+inward from both ends. Bottom right: $\max_x|n_{\text{bulk}}^{\text{TDVP}}-n_{\text{bulk}}^{\text{McWeeny}}|$ versus
+$t$ (log scale), the difference between the evolved and the adiabatic bulk.}
+\label{fig:full}
+\end{figure}
+
+%======================================================================
+\section{Results}\label{sec:results}
+%======================================================================
+
+\subsection{\texorpdfstring{Static chain, $\ell=6$ (\code{H0})}{Static chain, l=6 (H0)}}
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Quantity & Value \\
+\midrule
+$E_{\text{mode}}$ (\code{fermion\_mode}) & 0.0187632081 \\
+$E_{\text{gap}}$ (\code{kpm\_gap}) & 1.1536543281 \\
+$\epsilon_F=-(E_{\text{mode}}+E_{\text{gap}})/2$ & $-0.5862087681$ \\
+$\Tr P_{\text{bulk}}$ & 62.999999999993 \\
+$\bra{\psi}\Gamma_0\ket{\psi}$, $\bra{\psi}\Gamma_1\ket{\psi}$ & $9.0\times10^{-13}$, 1.0000000000009 \\
+$\bra{\bar\psi}\Gamma_0\ket{\bar\psi}$, $\bra{\bar\psi}\Gamma_1\ket{\bar\psi}$ & 0.99999999999997, $-1.7\times10^{-14}$ \\
+$E_1-E_0=\tfrac12\Tr[H(\Gamma_1-\Gamma_0)]$ & 0.0187632081 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{\texorpdfstring{$\Delta Q$ versus $\ell$ (\code{charge\_difference}, cell 20)}{Delta Q versus l (charge\_difference, cell 20)}}
+The cell prints all 40 entries. $\Delta Q$ is negative for $\ket{1}$ (the
+$+E$ member). $E$ halves with each added site from $\ell\approx5$ on, and $|\Delta Q|$ falls by about the same factor;
+$|E_{\text{bulk}}|$ decreases from 2.02 to
+1.006 and stays above $2E$ in every case (no gap-check warning).
+\begin{center}\small
+\begin{tabular}{@{}rlll@{\qquad}rlll@{}}
+\toprule
+$\ell$ & $\Delta Q$ & $E$ & $|E_{\text{bulk}}|$ & $\ell$ & $\Delta Q$ & $E$ & $|E_{\text{bulk}}|$\\
+\midrule
+1 & $-0.8481$ & $0.7379$ & 2.0181 & 21 & $-1.179\times10^{-5}$ & $5.722\times10^{-7}$ & 1.0235 \\
+2 & $-0.6107$ & $0.322$ & 2.0181 & 22 & $-6.180\times10^{-6}$ & $2.861\times10^{-7}$ & 1.0214 \\
+3 & $-0.4209$ & $0.1536$ & 1.7891 & 23 & $-3.233\times10^{-6}$ & $1.431\times10^{-7}$ & 1.0196 \\
+4 & $-0.2766$ & $0.07557$ & 1.5330 & 24 & $-1.688\times10^{-6}$ & $7.153\times10^{-8}$ & 1.0179 \\
+5 & $-0.1738$ & $0.03759$ & 1.3753 & 25 & $-8.798\times10^{-7}$ & $3.576\times10^{-8}$ & 1.0165 \\
+6 & $-0.1052$ & $0.01876$ & 1.2746 & 26 & $-4.578\times10^{-7}$ & $1.788\times10^{-8}$ & 1.0152 \\
+7 & $-0.06191$ & $9.377\times10^{-3}$ & 1.2077 & 27 & $-2.378\times10^{-7}$ & $8.941\times10^{-9}$ & 1.0141 \\
+8 & $-0.03563$ & $4.688\times10^{-3}$ & 1.1616 & 28 & $-1.234\times10^{-7}$ & $4.470\times10^{-9}$ & 1.0131 \\
+9 & $-0.02016$ & $2.344\times10^{-3}$ & 1.1288 & 29 & $-6.399\times10^{-8}$ & $2.235\times10^{-9}$ & 1.0122 \\
+10 & $-0.01125$ & $1.172\times10^{-3}$ & 1.1048 & 30 & $-3.307\times10^{-8}$ & $1.118\times10^{-9}$ & 1.0114 \\
+11 & $-6.211\times10^{-3}$ & $5.859\times10^{-4}$ & 1.0868 & 31 & $-1.710\times10^{-8}$ & $5.588\times10^{-10}$ & 1.0107 \\
+12 & $-3.398\times10^{-3}$ & $2.930\times10^{-4}$ & 1.0730 & 32 & $-8.829\times10^{-9}$ & $2.794\times10^{-10}$ & 1.0100 \\
+13 & $-1.846\times10^{-3}$ & $1.465\times10^{-4}$ & 1.0622 & 33 & $-4.356\times10^{-9}$ & $1.397\times10^{-10}$ & 1.0094 \\
+14 & $-9.961\times10^{-4}$ & $7.324\times10^{-5}$ & 1.0535 & 34 & $-2.268\times10^{-9}$ & $6.985\times10^{-11}$ & 1.0088 \\
+15 & $-5.347\times10^{-4}$ & $3.662\times10^{-5}$ & 1.0466 & 35 & $-1.187\times10^{-9}$ & $3.492\times10^{-11}$ & 1.0084 \\
+16 & $-2.856\times10^{-4}$ & $1.831\times10^{-5}$ & 1.0409 & 36 & $-6.271\times10^{-10}$ & $1.746\times10^{-11}$ & 1.0079 \\
+17 & $-1.520\times10^{-4}$ & $9.155\times10^{-6}$ & 1.0361 & 37 & $-3.124\times10^{-10}$ & $8.731\times10^{-12}$ & 1.0075 \\
+18 & $-8.057\times10^{-5}$ & $4.578\times10^{-6}$ & 1.0322 & 38 & $-1.619\times10^{-10}$ & $4.366\times10^{-12}$ & 1.0071 \\
+19 & $-4.257\times10^{-5}$ & $2.289\times10^{-6}$ & 1.0288 & 39 & $-8.226\times10^{-11}$ & $2.183\times10^{-12}$ & 1.0067 \\
+20 & $-2.243\times10^{-5}$ & $1.144\times10^{-6}$ & 1.0260 & 40 & $-4.882\times10^{-11}$ & $1.091\times10^{-12}$ & 1.0064 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Time-dependent ramp}
+\paragraph{Ramp-time scan (\code{run\_ramp}, smoothstep, cell 31).}
+\begin{center}\small
+\begin{tabular}{@{}rlllll@{}}
+\toprule
+$T$ & leak & wrong-branch weight & $\Delta Q(T)$ & \code{ΔQ\_adiabatic} & $\Delta Q(T)-$\code{ΔQ\_adiabatic} \\
+\midrule
+150 & $1.291\times10^{-7}$ & $9.0\times10^{-18}$ & $-0.889103$ & $-0.889108$ & $4.43\times10^{-6}$ \\
+200 & $5.326\times10^{-8}$ & $2.2\times10^{-21}$ & $-0.889106$ & $-0.889108$ & $1.98\times10^{-6}$ \\
+250 & $1.495\times10^{-8}$ & $1.2\times10^{-21}$ & $-0.889105$ & $-0.889108$ & $2.37\times10^{-6}$ \\
+300 & $5.493\times10^{-9}$ & $1.2\times10^{-22}$ & $-0.889103$ & $-0.889108$ & $4.97\times10^{-6}$ \\
+350 & $4.159\times10^{-9}$ & $3.0\times10^{-22}$ & $-0.889100$ & $-0.889108$ & $7.10\times10^{-6}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+The leak decreases as the ramp is slowed down; $\Delta Q(T)$ converges to $-0.88910$. The adiabatic value
+$\Delta Q(\psi_+)=-0.889108$ is the same for every $T$ (the final Hamiltonian does not depend on $T$). The remaining
+difference $\Delta Q(T)-\Delta Q(\psi_+)$ of 2--7$\times10^{-6}$ does not decrease with $T$ while the leak falls by a
+factor of 30, so it is not a non-adiabatic effect; it is consistent with the accumulated time-step error of the
+midpoint-rule TDVP ($dt=0.1$, more steps for larger $T$).
+
+\paragraph{Checks and full densities.}
+\begin{itemize}
+\item Initial mode: $\lVert H(0)\psi_f\rVert=1.12\times10^{-12}$, $\Delta Q(0)=4.6\times10^{-15}$,
+      $\lVert P_{\text{bulk}}\psi_f\rVert^2=1.8\times10^{-25}$.
+\item Fermi level for the ramp: $\epsilon_F=-0.58831$ in the window $(-0.82787,-0.34875)$; $\max|E|=7.5749$.
+\item $T=100$, TDVP bulk: overlap error $9.9\times10^{-9}$, completeness error $4.3\times10^{-9}$.
+\item $\max|n_{\text{bulk}}^{\text{TDVP}}-n_{\text{bulk}}^{\text{McWeeny}}| = 1.29\times10^{-3}$.
+\item Zero modes (cell 33): $T=300$: $\lVert C\psi_f(T)-\bar\psi_f(T)\rVert=9.5\times10^{-14}$,
+      $|\langle\psi_+\vert\psi_1(T)\rangle|^2=0.9999999945$, $|\langle\psi_+\vert\psi_0(T)\rangle|^2=1.2\times10^{-22}$;
+      $T=100$: $4.5\times10^{-14}$, $0.9999942664$, $3.7\times10^{-13}$. The same $T=100$ values are printed in cell 39.
+      $\psi_f$ and $\bar\psi_f$ evolved separately stay charge-conjugate partners to $10^{-13}$, and the missing
+      weight $1-|\langle\psi_+\vert\psi_1(T)\rangle|^2$ ($5.7\times10^{-6}$ for $T=100$, $5.5\times10^{-9}$ for $T=300$)
+      is the non-adiabatic leak.
+\item Method 1 vs method 2 over the $\ell$ sweep (cell 24): $\max_\ell|\Delta Q^{(1)}-\Delta Q^{(2)}|=5.6\times10^{-16}$.
+\end{itemize}
+
+\end{document}

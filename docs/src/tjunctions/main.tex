@@ -1,0 +1,257 @@
+\documentclass[11pt]{article}
+\input{../preamble.tex}
+\usepackage{mathtools}
+\newunicodechar{✓}{{\symfb ✓}}
+\newunicodechar{✗}{{\symfb ✗}}
+\sloppy\emergencystretch=3em
+\usepackage{needspace}
+\renewenvironment{function}[1]{\par\Needspace{7\baselineskip}\medskip\noindent{\raggedright\textbf{\large\texttt{\hyphenchar\font=-1 #1}}\par}\nopagebreak}{\par\medskip}
+% allow line breaks after underscores in \code{}
+\renewcommand{\code}[1]{\texttt{\hyphenchar\font=-1 #1}}
+\graphicspath{{figs/}}
+\hypersetup{pdftitle={MSH 3-T-junction array: function reference}}
+\newcommand{\ket}[1]{|#1\rangle}
+\newcommand{\bra}[1]{\langle#1|}
+
+\begin{document}
+
+\begin{center}
+{\LARGE\bfseries MSH 3-T-junction array}\\[0.5em]
+{\Large Function reference}\\[1.2em]
+\begin{tabular}{ll}
+\code{msh\_tjunctions\_tn.ipynb} & Julia, TensorBinding.jl / ITensors: MPO, DMRG, TDVP\\
+\code{tjunctions\_python\_ed.ipynb} & Python, kwant: exact diagonalization\\
+\code{tjunctions\_compare.ipynb} & Python: comparison of the two\\
+\end{tabular}\\[1.2em]
+Repository \code{MSH\_Tensor\_Network\_Methods}\\[0.3em]
+29 October 2026
+\end{center}
+
+\vspace{1em}
+\noindent This document explains every function and struct defined in the three notebooks: what it computes, the method,
+its inputs and outputs, the numerical settings that matter, and where it is used. All numbers are quoted from the saved
+outputs of the executed notebooks. Function names in \code{typewriter} are those of the code.
+
+\tableofcontents
+\clearpage
+
+%======================================================================
+\section{Overview}
+%======================================================================
+
+\subsection{Model and parameters}
+
+Both codes describe a magnet--superconductor hybrid (MSH) array of chain sites on a square lattice, without substrate. The
+Bogoliubov--de Gennes (BdG) Hamiltonian in the Nambu basis $(c_\uparrow, c_\downarrow, c^\dagger_\uparrow, c^\dagger_\downarrow)$ of the
+tensor-network (TN) notebook is
+\[
+H_{\rm BdG} = \begin{pmatrix} H_0 & \Delta\, i\sigma_y \\ (\Delta\, i\sigma_y)^\dagger & -H_0^* \end{pmatrix},
+\qquad
+H_0 = \sum_{\mathbf r} c^\dagger_{\mathbf r}\bigl(-\mu + J\,\mathbf S_{\mathbf r}\cdot\boldsymbol\sigma\bigr)c_{\mathbf r}
+ + \sum_{\mathbf r,\hat d} c^\dagger_{\mathbf r+\hat d}\bigl(-t + i\alpha(d_x\sigma_y - d_y\sigma_x)\bigr)c_{\mathbf r},
+\]
+where $\hat d$ runs over unit bonds between existing sites. The parameters are the same in both codes:
+
+\begin{center}
+\begin{tabular}{llll}
+\toprule
+Symbol & Value & Code name (Julia / Python) & Meaning\\
+\midrule
+$t$ & 1 & \code{t} / \code{t} & nearest-neighbour hopping\\
+$\mu$ & $-7$ & \code{μ} / \code{mu} & chemical potential\\
+$\alpha$ & 0.9 & \code{α} / \code{alpha} & Rashba spin--orbit coupling\\
+$\Delta$ & 2.4 & \code{Δ} / \code{Delta} & s-wave pairing\\
+$J$ & 5.8 & \code{J} / \code{J} & exchange coupling to the magnetic moments\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{Spin texture.} Each site carries a classical moment
+$\mathbf S = (\cos\phi\sin\theta,\ \sin\phi\sin\theta,\ \cos\theta)$ with
+\[
+\theta = (-1)^{x+y}\,\frac{\pi}{2}\,f, \qquad \phi = \theta_{\rm arm} + \frac{\pi}{2},
+\]
+where $\theta_{\rm arm} = 0, \pi, \pi/2$ for the right, left and upward arm. The rotation fraction $f\in[0,1]$ is set per site:
+$f = 0$ gives $\mathbf S\parallel\hat z$ (topological), $f = 1$ an in-plane antiferromagnet perpendicular to the arm (trivial).
+All gates and the fusion are written as time-dependent textures $f(c, s, n; t)$.
+
+\subsection{Geometry}
+
+The array has three T-junctions (cells $c = 1, 2, 3$) with junction sites at $x_c = -32, 0, 32$ on the horizontal chain $y = 0$,
+$x = -48\dots47$. Each cell consists of three arms of $2^L = 16$ sites:
+
+\begin{center}
+\begin{tabular}{llll}
+\toprule
+Arm $s$ & Direction & First site ($n=0$) & Sites\\
+\midrule
+1 & right ($+\hat x$) & junction site $(x_c, 0)$ & $x = x_c \dots x_c+15$\\
+2 & left ($-\hat x$) & $(x_c-1, 0)$ & $x = x_c-1 \dots x_c-16$\\
+3 & up ($+\hat y$) & $(x_c, 1)$ & $y = 1\dots16$\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+A site is labelled $(c, s, n)$ with $n = 0\dots15$ along the arm; the position is
+$\mathbf r(c,s,n) = (x_c, 0) + \mathbf o_s + n\,\hat e_s$ with origins $\mathbf o_s = (0,0), (-1,0), (0,1)$ and arm directions
+$\hat e_s$ (\code{array\_pos} in both codes). The array has $3\times3\times16 = 144$ sites and the BdG dimension is $D = 4\times144 = 576$.
+Neighbouring cells are joined end to end: the right end of cell $c$ ($x_c+15$) bonds to the left end of cell $c+1$ ($x_{c+1}-16 = x_c+16$).
+
+\paragraph{Initial setup.} The texture \code{f0} sets $f = 1$ (trivial) on cell 2 and on every vertical leg, and $f = 0$
+(topological) on the horizontal legs of cells 1 and 3. The topological segments $x = -48\dots-17$ and $x = 16\dots47$ each host two
+Majorana zero modes (MZMs): $\gamma_1, \gamma_2$ at the ends of cell 1's segment and $\gamma_3,\gamma_4$ at cell 3's. Their position
+expectation values are $-46.5, -17.5, 16.5, 45.5$ in the TN code (coordinate $\mathbf r\cdot\hat u$ with $\hat u$ at angle 0.05) and
+$x = -46.6, -17.5, 16.5, 45.6$ in the Python code. The fully trivial junction 2 has an Andreev bound state at $E = \pm0.127$; the next state is
+at $|E| = 0.268$.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{tn_ldos.png}
+\caption{Zero-energy LDOS $A(x,y,\omega=0)$ of the initial setup from DMRG (\code{msh\_tjunctions\_tn.ipynb}, section 5), with the
+initial spin texture: dots are moments along $\hat z$ (topological segments), arrows the in-plane moments of the trivial regions
+(cell 2 and all vertical legs). The four MZMs sit at the ends of the two topological segments.}
+\label{fig:ldos}
+\end{figure}
+
+\subsection{Encoding of the lattice in the MPO}
+
+The TN notebook stores a single-particle BdG vector as an MPS (and $H$ as an MPO) on eight sites
+\[
+[\,\text{nambu};\ \text{spin};\ \text{cell};\ \text{pos}_1, \text{pos}_2, \text{pos}_3, \text{pos}_4;\ \text{arm}\,]
+\]
+with dimensions $2, 2, 3, 2,2,2,2, 3$ (product $576 = D$). The position $n$ along an arm is written in binary (``quantics'') on the
+four qubits, with $\text{pos}_1$ the most significant bit:
+\[
+n = \sum_{k=1}^{4} b_k\, 2^{4-k}, \qquad b_k\in\{0,1\}.
+\]
+An operator diagonal in position, $\sum_n v_n \ket n\bra n$, is an MPO on the qubits (\code{diag\_mpo\_exact}); hopping along an arm is the
+binary-adder shift $\ket n\to\ket{n+1}$ (an MPO of bond dimension 2 from TensorBinding, non-cyclic, so $n=15$ is not joined to
+$n=0$); bonds at the junction and between cells use the rank-1 projectors $\ket0\bra0$ and $\ket{15}\bra{15}$ on the qubits combined with
+$\ket{b}\bra{a}$ operators on the arm and cell indices. The full $H$ has bond dimension $\chi(H) = 18$; with the moving exchange of a
+protocol it is 21--22. The dense form of the MPO (\code{dense}) uses the order nambu $\otimes$ spin $\otimes$ cell $\otimes$ pos $\otimes$ arm,
+arm fastest.
+
+\subsection{Nambu bases of the two codes}
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+ & TN (Julia) & Python (kwant)\\
+\midrule
+Basis per site & $(c_\uparrow, c_\downarrow, c^\dagger_\uparrow, c^\dagger_\downarrow)$ & $(c_\uparrow, c_\downarrow, c^\dagger_\downarrow, -c^\dagger_\uparrow)$\\
+Component order & nambu $\otimes$ spin $\otimes$ site & site-major, $4\,\text{site} + \text{orbital}$\\
+On-site term & $-\mu + J\mathbf S\cdot\boldsymbol\sigma$; pairing $\Delta\,i\sigma_y$ & $-\mu\tau_z + \Delta\tau_x + J\,\tau_0\mathbf S\cdot\boldsymbol\sigma$\\
+Hopping ($+\hat x$, $+\hat y$) & $-t + i\alpha\sigma_y$, \ $-t - i\alpha\sigma_x$ & $-t\tau_z + i\alpha\tau_z\sigma_y$, \ $-t\tau_z - i\alpha\tau_z\sigma_x$\\
+Particle--hole operator & $C = \tau_x K$ & $C = \tau_y\sigma_y K$\\
+Charge operator & $\tau_z$ on the Nambu site & \code{tauz} $= (1,1,-1,-1)$ per site\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Per site, the TN components are $W$ times the kwant components: $(u_\uparrow, u_\downarrow, v_\uparrow, v_\downarrow) = (a, b, -d, c)$
+for kwant components $(a,b,c,d) = (u_\uparrow, u_\downarrow, v_\downarrow, -v_\uparrow)$. The Python notebook builds this map as a
+permutation-with-sign matrix (\code{to\_tb\_basis}) and finds $\|H_{\rm kwant} - H_{\rm TensorBinding}\| = 3.5\times10^{-12}$ for the
+initial texture and $\le 2\times10^{-9}$ at three protocol points.
+
+\subsection{Logical qubit and readout}
+
+The two zero-mode fermions are
+\[
+\psi_A = (\gamma_1 + i\gamma_2)/\sqrt2, \qquad \psi_B = (\gamma_3 + i\gamma_4)/\sqrt2,
+\]
+taken as the positive-energy members of each $\pm E$ pair. The logical qubit is the even-parity pair $\ket0_L = \ket{00}$,
+$\ket1_L = \ket{11}$ (occupations of $\psi_A$, $\psi_B$). Both states share the same filled negative-energy bulk; they differ only in
+the occupation of the two fermions. In single-particle language, $\ket{11}$ occupies $\psi_A,\psi_B$ while $\ket{00}$ occupies their
+particle--hole partners $C\psi_A, C\psi_B$. The electron density of an occupied state $\phi$ is $|u_\phi|^2$, and
+$|u_{C\psi}|^2 = |v_\psi|^2$. The bulk therefore cancels in the difference and
+\[
+\delta n(\mathbf r,t) = n_{\hat U\ket{11}}(\mathbf r) - n_{\hat U\ket{00}}(\mathbf r)
+ = \sum_{k=A,B}\sum_\sigma \bigl(|u_{k\sigma}(\mathbf r,t)|^2 - |v_{k\sigma}(\mathbf r,t)|^2\bigr),
+\qquad
+\Delta Q = \sum_{\mathbf r}\delta n = \sum_k \bra{\psi_k}\tau_z\ket{\psi_k}.
+\]
+$\Delta Q$ is an electron number; the charge is $-e\,\Delta Q$. The TN code evaluates the right-hand side from the two evolved MPS
+only. The Python code evolves the full $4N\times4N$ basis and evaluates the left-hand side from $G = WW^\dagger$ of the occupied columns;
+the two are equal by the argument above.
+
+\paragraph{Leakage.} The leakage of mode $k$ out of the initial zero-mode subspace is
+\[
+\ell_k = 1 - \sum_{i=1}^{4} |z_{ik}|^2, \qquad z_{ik} = \langle\gamma_i(0)|\psi_k(t)\rangle .
+\]
+At the end of the partial fusion, the leakage is measured against the four lowest states of the final Hamiltonian instead.
+
+\paragraph{Gates.} \code{exchange\_12} exchanges $\gamma_1$ and $\gamma_2$ around junction 1's vertical leg; applied once it is $\sqrt Z$,
+twice $Z$. \code{exchange\_23} exchanges $\gamma_2$ and $\gamma_3$ through the trivial junction 2; once is $\sqrt X$, twice $X$. The
+partial fusion of pair A (cell 1) makes the cell trivial except $2L_p+1 = 3$ sites around the junction, so that $\psi_A$ acquires a
+finite energy ($E_A = 0.0439$ at the end) and the two logical states acquire different charges. $\Delta Q = Q(\hat U\ket1) - Q(\hat U\ket0)$
+compares the two evolved logical states: after $Z$ or no gate each logical state is mapped to itself and $\Delta Q$ is close to the adiabatic
+value $-0.4769$ of pair A ($-0.4777$ and $-0.4774$); after $X$ the two are interchanged and the sign flips ($+0.4770$).
+
+\subsection{Workflow and data files}
+
+Run order (all in the repository directory):
+\begin{center}\code{msh\_tjunctions\_tn.ipynb} $\to$ \code{tjunctions\_python\_ed.ipynb} $\to$ \code{tjunctions\_compare.ipynb}.\end{center}
+The Python notebook needs \code{tb\_reference/} from the TN notebook; the comparison notebook only loads files.
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{>{\raggedright}p{7.2cm}>{\raggedright\arraybackslash}X}
+\toprule
+File & Content (written by)\\
+\midrule
+\code{tb\_reference/coords.txt}, \code{*.bin} & site coordinates and dense MPO matrices at four protocol points (TN, sec.~4)\\
+\code{msh\_array\_ldos\_tn.csv} & DMRG LDOS $A(x,y,\omega)$ (TN, sec.~5)\\
+\code{msh\_tjunctions\_tdvp\_\{Z,X,F\}.jls} & cached TDVP results, both modes (TN, sec.~6)\\
+\code{tdvp\_progress.log}, \code{tdvp\_status.txt} & TDVP progress log and status file (TN, sec.~6)\\
+\code{msh\_gate\_density\_tdvp\_\{Z,X\}.csv}, \code{msh\_gate\_dQ\_tdvp\_\{Z,X\}.csv} & $\delta n(x,t)$ on the horizontal chain and $\Delta Q(t)$ (TN, sec.~6)\\
+\code{msh\_tjunctions\_tn\_gates.csv} & 12 summary numbers, \code{key,value} (TN, sec.~8)\\
+\code{msh\_tjunctions\_tn\_timing.csv} & wall times and scaling benchmark (TN, sec.~9)\\
+\code{.../array\_ldos\_kwant.npz} & dense LDOS (Python, sec.~5); \code{...} $=$ \code{tjunctions\_python\_ed\_data/}\\
+\code{.../gate\_density\_kwant\_\{Z,X400\}.npz} & $\delta n(x,t)$, $\Delta Q(t)$ (Python, sec.~9)\\
+\code{.../gates\_kwant.npz} & the 12 summary numbers under the same keys (Python, sec.~10)\\
+\code{.../timing\_kwant.npz} & wall times and scaling benchmark (Python, sec.~11)\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Runtimes stated in the notebooks: the TN notebook takes about 10 minutes with the TDVP cache and about 2.5 hours for a first TDVP run
+with six Julia threads (\code{JULIA\_NUM\_THREADS=6}); the Python notebook about 35 minutes; the comparison seconds.
+
+\subsection{Mapping between the two codes}
+
+The compare rows are numbered in the order they are printed by \code{tjunctions\_compare.ipynb} (Table~\ref{tab:compare}).
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{>{\raggedright}p{3.0cm}>{\raggedright}p{4.3cm}>{\raggedright}p{4.3cm}X}
+\toprule
+Quantity & TN (\code{msh\_tjunctions\_tn}) & Python (\code{tjunctions\_python\_ed}) & Compare row(s)\\
+\midrule
+Geometry & \code{TArray}, \code{array\_pos}, \code{center\_x} & \code{label}, \code{array\_pos}, \code{center\_x} & --\\
+Texture & \code{array\_spin} & \code{spins} & --\\
+Protocols & \code{Exchange12}, \code{Exchange23}, \code{Fusion}, \code{f\_array\_braid}, \code{f\_array\_23}, \code{f\_fuse} & same names (\code{f\_array\_12}) & --\\
+$H$ & \code{msh\_tjunction\_array} (MPO) & \code{build\_system\_3T}, \code{ham\_kwant} & TN sec.~4, Py sec.~4\\
+$H(t)$ & \code{MovingArrayH} & \code{ham}, \code{ham\_sp} & --\\
+Subgap LDOS & \code{zero\_mode\_subspace}, \code{ritz}, \code{site\_uv}, \code{gauss} & \code{la.eigh}, \code{w\_site}, \code{g\_eta} & 1\\
+Majoranas & \code{localize\_majoranas}, \code{clean\_majoranas} & \code{individual\_MZMs} (\code{takagi}, \code{PHconj}) & --\\
+$\psi_A,\psi_B$ & \code{pair\_modes} & \code{fix\_unitary}, \code{masks} & --\\
+Time evolution & \code{evolve\_mode\_tdvp} (TDVP, $dt=0.1$) & \code{evolve}, \code{step} (Gauss--Legendre, $dt = 0.25$) & --\\
+$\delta n(x,t)$ & \code{site\_dn} & \code{electron\_density}, \code{readout} & 2, 4\\
+$\Delta Q(t)$ & \code{ΔQ\_mps} & \code{readout} (\code{dQ}) & 3, 5\\
+Leakage after gates & \code{mode\_leak}$(z)$ & \code{mode\_leak}$(R)$ & 6--9\\
+Fusion $\Delta Q$ & \code{analyze} (\code{:fusion}) & \code{run} (\code{"fusion"}) & 10--12\\
+Fusion leakage & \code{fusion\_leak} & \code{lk} in \code{run} & 13--15\\
+Adiabatic $\Delta Q$, $E_A$ & \code{ΔQ\_mps(φF[iA])}, \code{EF[iA]} & \code{U\_end[:, iA]}, \code{E\_end[iA]}; \code{dQ\_adiabatic} & 16, 17\\
+Cost / scaling & \code{bench\_tdvp}, section 9 & \code{ham\_nleg}, \code{bench\_step}, section 11 & cost section\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\clearpage
+\input{partI.tex}
+\clearpage
+\input{partII.tex}
+\clearpage
+\input{partIII.tex}
+
+\end{document}
