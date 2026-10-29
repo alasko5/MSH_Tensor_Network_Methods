@@ -12,9 +12,9 @@ Python/kwant notebooks.
 | `msh_chain_tn.ipynb` | Julia | Single MSH chain as an MPO. LDOS by exact diagonalization and by TensorBinding's KPM at four snapshots of the spin ramp (fully topological → fully trivial), Majorana zero modes and the fermion mode (DMRG), charge difference ΔQ between the logical states and the time-dependent spin ramp (TDVP). Saves its results to `msh_chain_tn_results.npz`. |
 | `msh_chain_python_ed.ipynb` | Python | Dense NumPy reference for `msh_chain_tn.ipynb`: same model, same ramp snapshots and protocols. Writes `msh_compare_python.npz`. |
 | `msh_chain_compare.ipynb` | Python | Number-by-number comparison of the two MSH chain notebooks: loads `msh_chain_tn_results.npz` and `msh_compare_python.npz`, prints one ✓/✗ row per quantity (dense against dense to round-off, tensor networks against dense to their truncation error) and plots the overlays. |
-| `msh_tjunctions_tn.ipynb` | Julia | Three-T-junction MSH array: MPO Hamiltonian, subgap LDOS and Majoranas from DMRG, Z and X gates with partial-fusion readout (logical gate, ΔQ, δn(x, t)), and the full MPS/TDVP evolution compared with the exact one and with kwant. |
-| `tjunctions_python_ed.ipynb` | Python | kwant/exact-diagonalization reference for `msh_tjunctions_tn.ipynb`: same geometry and protocols. Checks that kwant builds the same Hamiltonian as TensorBinding (`tb_reference/`), then the subgap LDOS, the Z and X gates with partial fusion, and δn(x, t). Writes `tjunctions_python_ed_data/`. |
-| `tjunctions_compare.ipynb` | Python | Number-by-number comparison of the two T-junction notebooks: LDOS, exact δn(x, t) and the MPS/TDVP δn(x, t) and ΔQ(t) against the dense Python results, one ✓/✗ row per quantity. |
+| `msh_tjunctions_tn.ipynb` | Julia | Three-T-junction MSH array, with MPO/MPS methods only: MPO Hamiltonian (checked against the dense lattice matrix), subgap LDOS and Majoranas from DMRG, and the Z and X gates with partial-fusion readout (logical gate, leakage, ΔQ, δn(x, t)) from TDVP. Ends with the cost of the tensor-network route and its scaling with system size. |
+| `tjunctions_python_ed.ipynb` | Python | kwant/exact-diagonalization reference for `msh_tjunctions_tn.ipynb`: same geometry and protocols. Checks that kwant builds the same Hamiltonian as the TensorBinding MPO (`tb_reference/`), then the subgap LDOS, the Z and X gates with partial fusion, δn(x, t), and the cost of the dense route. Writes `tjunctions_python_ed_data/`. |
+| `tjunctions_compare.ipynb` | Python | Number-by-number comparison of the two T-junction notebooks: LDOS, MPS/TDVP δn(x, t) and ΔQ(t), and the gate and fusion quantities against the dense Python results (one ✓/✗ row each), plus the runtimes and the scaling of both methods with system size. |
 | `kitaev_charge_difference.ipynb` | Julia | Kitaev chain: fermion mode from the DMRG Majorana doublet, KPM LDOS, McWeeny bulk projector with ϵF = −(E_mode + E_gap)/2, ΔQ versus topological length, and a time-dependent smoothstep ramp that fuses the Majoranas (TDVP, with TDVP and McWeeny bulk densities). |
 
 ## Data files
@@ -24,9 +24,8 @@ Committed CSVs (small results that other notebooks read):
 | File | Written by | Read by |
 | --- | --- | --- |
 | `msh_array_ldos_tn.csv` | `msh_tjunctions_tn.ipynb` | `tjunctions_compare.ipynb` |
-| `msh_gate_density_tn_{Z,X}.csv` | `msh_tjunctions_tn.ipynb` (exact evolution) | `tjunctions_compare.ipynb` |
-| `msh_gate_density_tdvp_{Z,X}.csv` | MPS/TDVP run of the full protocol, outside the notebook (1–2 h per mode) | `msh_tjunctions_tn.ipynb` (section 7), `tjunctions_compare.ipynb` |
-| `msh_gate_dQ_tdvp_{Z,X}.csv` | computed from the full TDVP states of the same run | `msh_tjunctions_tn.ipynb` (section 7), `tjunctions_compare.ipynb` |
+| `msh_gate_density_tdvp_{Z,X}.csv`, `msh_gate_dQ_tdvp_{Z,X}.csv` | `msh_tjunctions_tn.ipynb` (TDVP, section 6) | `tjunctions_compare.ipynb` |
+| `msh_tjunctions_tn_gates.csv`, `msh_tjunctions_tn_timing.csv` | `msh_tjunctions_tn.ipynb` (sections 8 and 9) | `tjunctions_compare.ipynb` |
 
 Caches and large outputs (`*.jls`, `*.npz`, `*.npy`, `*.h5`, `*_data/`, `tb_reference/`) are not committed (see `.gitignore`). The
 notebooks write them next to themselves on the first run and load them afterwards:
@@ -35,9 +34,10 @@ notebooks write them next to themselves on the first run and load them afterward
   `msh_chain_ramp.jls` (~4 min). Set the matching `RUN_*` flag to `true` to recompute. Its last section writes
   `msh_chain_tn_results.npz`.
 - `msh_chain_python_ed.ipynb`: `msh_compare_python.npz`.
-- `msh_tjunctions_tn.ipynb`: `tb_reference/` (dense BdG matrices at four protocol points, ~21 MB, read by
-  `tjunctions_python_ed.ipynb`).
-- `tjunctions_python_ed.ipynb`: `tjunctions_python_ed_data/` (LDOS and δn figures and `.npz`).
+- `msh_tjunctions_tn.ipynb`: `msh_tjunctions_tdvp_{Z,X,F}.jls` (TDVP results, ~2.5 h with 6 threads; `RUN_TDVP = true` to recompute),
+  `tdvp_progress.log` and `tdvp_status.txt` (progress of a TDVP run), `tb_reference/` (dense form of the MPO at four protocol points,
+  ~21 MB, read by `tjunctions_python_ed.ipynb`), figures `nb_*.png`.
+- `tjunctions_python_ed.ipynb`: `tjunctions_python_ed_data/` (LDOS, δn, gate results and timings as `.npz`, and figures).
 
 ## Running
 
@@ -52,9 +52,10 @@ notebooks write them next to themselves on the first run and load them afterward
 3. **MSH chain comparison.** Run `msh_chain_python_ed.ipynb` (about 4 minutes) and `msh_chain_tn.ipynb` (a few minutes
    with its caches), in either order, in this directory. Then run `msh_chain_compare.ipynb`, which loads the two `.npz` files
    and prints a ✓/✗ table.
-4. **T-junction array.** Run `msh_tjunctions_tn.ipynb` first (about 14 minutes single-threaded); it writes `tb_reference/`.
-   Its TDVP comparison uses the committed `msh_gate_*_tdvp_*.csv` files instead of rerunning TDVP. Then run
-   `tjunctions_python_ed.ipynb` (about 12 minutes) in the same directory, and finally `tjunctions_compare.ipynb`.
+4. **T-junction array.** Run `msh_tjunctions_tn.ipynb` first; it writes `tb_reference/`. Its first run does the TDVP of section 6, about
+   2.5 hours with six threads (start Jupyter with `JULIA_NUM_THREADS=6`; follow `tdvp_status.txt`); later runs load the cached results
+   and take about 10 minutes (DMRG). Then run `tjunctions_python_ed.ipynb` (about 15 minutes) in the same directory, and finally
+   `tjunctions_compare.ipynb`.
 
 ## Conventions
 

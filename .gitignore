@@ -13,3 +13,6 @@ __pycache__/
 *.h5
 *_data/
 tb_reference/
+tdvp_progress.log
+tdvp_status.txt
+nb_*.png
