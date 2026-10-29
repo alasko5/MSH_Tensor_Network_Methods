@@ -1,7 +1,7 @@
 key,value
-dmrg_ldos,50.104980061
-dmrg_mzm,247.767352909
-dmrg_final,250.967774235
+dmrg_ldos,41.146704955
+dmrg_mzm,279.294747764
+dmrg_final,253.31853833
 tdvp_Z_A,4667.6873989105225
 steps_Z,44600.0
 tdvp_Z_B,4016.65385389328
@@ -15,11 +15,11 @@ steps_F,3800.0
 tdvp_F_B,392.3807280063629
 steps_F,3800.0
 bench_sites_L4,144.0
-bench_step_L4,0.0875230213
+bench_step_L4,0.0932793306
 bench_mps_size_L4,4845.0
 bench_sites_L5,288.0
-bench_step_L5,0.12627053
+bench_step_L5,0.1153944815
 bench_mps_size_L5,5997.0
 bench_sites_L6,576.0
-bench_step_L6,0.2584977861
+bench_step_L6,0.2473295451
 bench_mps_size_L6,7149.0
