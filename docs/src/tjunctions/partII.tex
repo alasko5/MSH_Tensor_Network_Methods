@@ -6,11 +6,16 @@ The same geometry, texture and protocols, with exact diagonalization and an exac
 follows the construction of the user's CZ, QFT and period-finding notebooks: \code{individual\_MZMs}, \code{fix\_unitary}, logical-state
 \code{masks} and the Gauss--Legendre \code{step}.
 
-\subsection{Setup (cells 1--2)}
+\textbf{Where the code lives.} The model (sections 1--3), the zero-mode construction of section 6 and the sparse Gauss--Legendre step are
+defined in \code{tjunctions\_model.py}, which this notebook and \code{logical\_gates\_python\_ed.ipynb} import
+(\code{from tjunctions\_model import *}); the notebook keeps the checks, the readout, the runs and the figures. The functions are documented
+below in the order the notebook uses them, wherever they are defined.
 
-\code{OMP\_NUM\_THREADS}, \code{OPENBLAS\_NUM\_THREADS} and \code{MKL\_NUM\_THREADS} are set to 1 before NumPy is imported (the comment: for
-tiny matrices threaded BLAS only adds contention; it also makes the timings single-thread). \code{DATA\_DIR = "tjunctions\_python\_ed\_data"}
-receives figures and \code{.npz} files. Cell 2 defines the Pauli matrices \code{tau\_0, tau\_x, tau\_y, tau\_z} and the Kronecker products
+\subsection{Setup (cell 1)}
+
+Cell 1 sets \code{OMP\_NUM\_THREADS}, \code{OPENBLAS\_NUM\_THREADS} and \code{MKL\_NUM\_THREADS} to 1 before NumPy is imported
+(\code{tjunctions\_model.py} does the same if it is imported first; the comment: for tiny matrices threaded BLAS only adds contention; it also makes the timings single-thread). \code{DATA\_DIR = "tjunctions\_python\_ed\_data"}
+receives figures and \code{.npz} files. The module defines the Pauli matrices \code{tau\_0, tau\_x, tau\_y, tau\_z} and the Kronecker products
 \code{txs0} $=\tau_x\sigma_0$, \code{t0sx}, \code{t0sy}, \code{t0sz}, \code{tzsx}, \code{tzsy}, \code{tzs0}, \code{tysy}, and \code{tysx}, \code{tys0} for the unused spinor branches of \code{PHconj} (first factor Nambu,
 second spin).
 
@@ -129,7 +134,7 @@ def PHconj(psi, ordering="ltslts", spinor="udd-u"):
 Particle--hole conjugate of the columns of \code{psi} ($4N_s\times n$). For the site-major ordering \code{"ltslts"} and the kwant spinor
 \code{"udd-u"} it applies $\tau_y\sigma_y$ to each site's four components of $\psi^*$ (the case used here). Other branches: spinor \code{"uddu"}
 ($\tau_y\sigma_x$, \code{tysx}), \code{"udud"} ($\tau_y\sigma_0$, \code{tys0}) and a Nambu-outer ordering \code{"tsltsl"}. The matrices
-\code{tysx} $=\tau_y\sigma_x$ and \code{tys0} $=\tau_y\sigma_0$ are defined in cell 2, so every branch runs; only the default is used here.
+\code{tysx} $=\tau_y\sigma_x$ and \code{tys0} $=\tau_y\sigma_0$ are defined in \code{tjunctions\_model.py}, so every branch runs; only the default is used here.
 \end{function}
 
 \begin{function}{takagi(A)}
@@ -203,12 +208,12 @@ the fixed $M$ in BdG form and makes the masks (column $2N+k$ occupied $\Leftrigh
 (The copied code computed the Majorana-to-fermion block twice; the duplicate has been removed.) \code{mbs2 = mbs[:, [0,1,2,3]]}
 pairs $(\gamma_1,\gamma_2)$ and $(\gamma_3,\gamma_4)$. Checks printed: column energies $(-1.158, -1.090, 1.090, 1.158)\times10^{-9}$ (an
 \code{assert} requires the last two to be positive; otherwise the order within a pair must be swapped), $\|U^\dagger U - 1\| = 6.5\times10^{-14}$,
-$\max\|C\psi_{2N+k} - \psi_{2N-1-k}\| = 2.2\times10^{-14}$. \code{psi0 = U\_fixed.copy()} is the initial full basis.
+$\max\|C\psi_{2N+k} - \psi_{2N-1-k}\| = 2.2\times10^{-14}$. In \code{tjunctions\_model.py}, \code{zero\_mode\_frame(H)} runs \code{eigh}, \code{individual\_MZMs} and \code{fix\_unitary} (with the pairing \code{mbs[:, [0, 1, 2, 3]]}) and returns \code{psi0}, the initial full basis, with the eigenvalues, the Majoranas and the zero-energy mask.
 \end{function}
 
 \subsubsection*{Logical states}
 
-\code{masks} is a $4\times4N$ boolean array, one row per state $\ket{n_An_B}$: $\ket{00}$, $\ket{01}$, $\ket{10}$, $\ket{11}$. Columns $2N, 2N+1$
+\code{masks = logical\_masks()} (\code{tjunctions\_model.py}) is a $4\times4N$ boolean array, one row per state $\ket{n_An_B}$: $\ket{00}$, $\ket{01}$, $\ket{10}$, $\ket{11}$. Columns $2N, 2N+1$
 are set to the occupations of $\psi_A$, $\psi_B$; all higher columns are empty; the lower half is set by
 \code{masks[:, :2N] = np.flip(\textasciitilde masks[:, 2N:], axis=1)}, so a column below $2N$ is occupied exactly when its particle--hole partner
 is empty. Thus $\ket{00}$ occupies all $2N$ negative-energy columns (including $C\psi_A$, $C\psi_B$), and $\ket{11}$ occupies $\psi_A,\psi_B$
@@ -318,7 +323,7 @@ X, two exchanges & $(3.4163, 3.4869)\times10^{-5}$ & $+0.477004$ ($+0.476113$, $
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.9\textwidth]{py_dQ.png}
-\caption{Python, cell 19: $\Delta Q$ during the fusion. Left: after Z and with no gate, against the adiabatic value
+\caption{Python, cell 18: $\Delta Q$ during the fusion. Left: after Z and with no gate, against the adiabatic value
 (\code{dQ\_adiabatic}, dotted). Right: after X, against minus the adiabatic value.}
 \end{figure}
 

@@ -15,6 +15,8 @@ Python/kwant notebooks.
 | `msh_tjunctions_tn.ipynb` | Julia | Three-T-junction MSH array, with MPO/MPS methods only: MPO Hamiltonian (checked against the dense lattice matrix), subgap LDOS and Majoranas from DMRG, and the Z and X gates with partial-fusion readout (leakage of each mode, ΔQ, δn(x, t)) from TDVP. Ends with the cost of the tensor-network route and its scaling with system size. |
 | `tjunctions_python_ed.ipynb` | Python | kwant/exact-diagonalization reference for `msh_tjunctions_tn.ipynb`: same geometry and protocols. Checks that kwant builds the same Hamiltonian as the TensorBinding MPO (`tb_reference/`), then the subgap LDOS, and the Z and X gates with partial fusion in the construction of the CZ, QFT and period-finding notebooks (`individual_MZMs`, `fix_unitary`, logical-state masks, full-basis Gauss–Legendre evolution): leakage, ΔQ and δn(x, t), and the cost of the dense route. Writes `tjunctions_python_ed_data/`. |
 | `tjunctions_compare.ipynb` | Python | Number-by-number comparison of the two T-junction notebooks: LDOS, MPS/TDVP δn(x, t) and ΔQ(t), and the leakage and fusion quantities against the dense Python results (one ✓/✗ row each), plus the runtimes and the scaling of both methods with system size. |
+| `logical_gates_tn.ipynb` | Julia | Logical gates (√Z, Z, √X, X) of the T-junction array by the reduced method: the 4×4 Majorana matrix M from the TDVP overlaps cached by `msh_tjunctions_tn.ipynb`, and its spin representation on the zero-mode Fock space (signs and relative phases). No new time evolution. Writes `logical_gates_tn.csv`. |
+| `logical_gates_python_ed.ipynb` | Python | Dense reference for the logical gates: the full-frame many-body amplitudes from a Pfaffian (generalized Wick theorem, as in the CZ and period-finding notebooks), including the probability that the bulk stays unexcited, against the reduced method from the same evolution, and against the tensor-network gates of `logical_gates_tn.csv`. |
 | `kitaev_charge_difference.ipynb` | Julia | Kitaev chain: fermion mode from the DMRG Majorana doublet, KPM LDOS, McWeeny bulk projector with ϵF = −(E_mode + E_gap)/2, ΔQ versus topological length, and a time-dependent smoothstep ramp that fuses the Majoranas (TDVP, with TDVP and McWeeny bulk densities). |
 
 ## Documentation
@@ -28,6 +30,9 @@ settings, and the printed results and figures.
 | `docs/msh_chain_function_reference.pdf` | `msh_chain_tn.ipynb`, `msh_chain_python_ed.ipynb`, `msh_chain_compare.ipynb`, and the TensorBinding routines they use |
 | `docs/msh_tjunctions_function_reference.pdf` | `msh_tjunctions_tn.ipynb`, `tjunctions_python_ed.ipynb`, `tjunctions_compare.ipynb` |
 
+`tjunctions_model.py` holds the Python model of the T-junction array (geometry, kwant system, protocols, Hamiltonian, zero-mode
+construction and the Gauss–Legendre step), imported by `tjunctions_python_ed.ipynb` and `logical_gates_python_ed.ipynb`.
+
 The LaTeX sources are in `docs/src/`; `docs/src/build.sh` rebuilds the PDFs from them and the notebook outputs (see
 `docs/src/README.md`).
 
@@ -40,6 +45,7 @@ Committed CSVs (small results that other notebooks read):
 | `msh_array_ldos_tn.csv` | `msh_tjunctions_tn.ipynb` | `tjunctions_compare.ipynb` |
 | `msh_gate_density_tdvp_{Z,X}.csv`, `msh_gate_dQ_tdvp_{Z,X}.csv` | `msh_tjunctions_tn.ipynb` (TDVP, section 6) | `tjunctions_compare.ipynb` |
 | `msh_tjunctions_tn_gates.csv`, `msh_tjunctions_tn_timing.csv` | `msh_tjunctions_tn.ipynb` (sections 8 and 9) | `tjunctions_compare.ipynb` |
+| `logical_gates_tn.csv` | `logical_gates_tn.ipynb` | `logical_gates_python_ed.ipynb` |
 
 Also committed, so that the two compare notebooks run from a fresh clone without rerunning anything:
 
@@ -60,6 +66,8 @@ Other caches and large outputs (`*.jls`, other `*.npz`, `*.npy`, `*.h5`, the fig
   `tdvp_progress.log` and `tdvp_status.txt` (progress of a TDVP run), `tb_reference/` (dense form of the MPO at four protocol points,
   ~21 MB, read by `tjunctions_python_ed.ipynb`), figures `nb_*.png`.
 - `tjunctions_python_ed.ipynb`: `tjunctions_python_ed_data/` (LDOS, δn, gate results and timings as `.npz`, and figures).
+- `logical_gates_python_ed.ipynb`: `logical_gates_python_ed_data/frames.npz` (the evolved full frames after one and two exchanges,
+  ~30 min; `RUN_EVOLUTION = True` to recompute).
 
 ## Running
 
@@ -85,6 +93,8 @@ Other caches and large outputs (`*.jls`, other `*.npz`, `*.npy`, `*.h5`, the fig
    2.5 hours with six threads (start Jupyter with `JULIA_NUM_THREADS=6`; follow `tdvp_status.txt`); later runs load the cached results
    and take about 10 minutes (DMRG). Then run `tjunctions_python_ed.ipynb` (about 35 minutes) in the same directory, and finally
    `tjunctions_compare.ipynb`. The compare notebook alone runs immediately on the committed CSV and `.npz` files.
+5. **Logical gates.** `logical_gates_tn.ipynb` needs the TDVP caches of `msh_tjunctions_tn.ipynb` (`msh_tjunctions_tdvp_{Z,X}.jls`) and runs
+   in seconds; `logical_gates_python_ed.ipynb` evolves the full frame once (about 30 minutes, then cached) and reads `logical_gates_tn.csv`.
 
 ## Conventions
 
