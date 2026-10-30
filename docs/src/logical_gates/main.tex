@@ -1,0 +1,395 @@
+\documentclass[11pt]{article}
+\input{../preamble.tex}
+\usepackage{mathtools}
+\sloppy\emergencystretch=3em
+\usepackage{needspace}
+\renewenvironment{function}[1]{\par\Needspace{7\baselineskip}\medskip\noindent{\raggedright\textbf{\large\texttt{\hyphenchar\font=-1 #1}}\par}\nopagebreak}{\par\medskip}
+\renewcommand{\code}[1]{\texttt{\hyphenchar\font=-1 #1}}
+\hypersetup{pdftitle={MSH 3-T-junction array, logical gates: function reference}}
+\newcommand{\ket}[1]{|#1\rangle}
+\newcommand{\bra}[1]{\langle#1|}
+
+\begin{document}
+
+\begin{center}
+{\LARGE\bfseries MSH 3-T-junction array: logical gates}\\[0.5em]
+{\Large Function reference}\\[1.2em]
+\begin{tabular}{lp{8.6cm}}
+\code{logical\_gates\_tn.ipynb} & Julia: reduced method from the tensor-network (TDVP) evolution\\
+\code{logical\_gates\_python\_ed.ipynb} & Python: full Pfaffian method and reduced method, dense\\
+\code{tjunctions\_model.py} & Python: shared model of the array (with \code{tjunctions\_python\_ed.ipynb})\\
+\end{tabular}\\[1.2em]
+Repository \code{MSH\_Tensor\_Network\_Methods}, branch \code{tjunctions-logical-gates}\\[0.3em]
+30 October 2026
+\end{center}
+
+\vspace{1em}
+\noindent This document explains every function defined in the two logical-gate notebooks, and the functions of
+\code{tjunctions\_model.py} they use: what each computes, the method, inputs and outputs, and the numerical settings that matter.
+All numbers are quoted from the saved outputs of the executed notebooks. The model itself (geometry, Hamiltonian, protocols, zero-mode
+construction) is described in detail in \code{docs/msh\_tjunctions\_function\_reference.pdf}; here it is only summarized.
+
+\tableofcontents
+\clearpage
+
+%======================================================================
+\section{Overview}
+%======================================================================
+
+\subsection{What is computed}
+
+The array of \code{msh\_tjunctions\_tn.ipynb} carries four Majorana zero modes $\gamma_1,\dots,\gamma_4$, paired into the positive-energy
+fermion modes $\psi_A = (\gamma_1 + i\gamma_2)/\sqrt2$ (junction 1) and $\psi_B = (\gamma_3 + i\gamma_4)/\sqrt2$ (junction 3). The logical qubit
+is the even-parity pair
+\[
+\ket0_L = \ket{00},\qquad \ket1_L = \ket{11},
+\]
+where $\ket{n_An_B}$ has mode $\psi_m$ occupied when $n_m = 1$ (the convention of the masks in the CZ, QFT and period-finding notebooks).
+The two gate protocols of the T-junction notebooks are analysed after one and after two exchanges:
+
+\begin{center}
+\begin{tabular}{lllcc}
+\toprule
+Protocol & Exchanges & $T_1$ & One exchange & Two\\
+\midrule
+\code{exchange\_12} (cell 1, \code{rot\_Tz = 200}) & $\gamma_1\leftrightarrow\gamma_2$ (same fermion) & 2040 & $\sqrt{Z}{}^\dagger$ & $Z$\\
+\code{exchange\_23} (cell 2, \code{rot\_Tx = 400}) & $\gamma_2\leftrightarrow\gamma_3$ (different fermions) & 3880 & $\sqrt{X}{}^\dagger$ & $X$\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The result for each is the \textbf{logical unitary} on $\{\ket0_L,\ket1_L\}$, with signs and relative phases, by two methods:
+
+\begin{itemize}
+\item \textbf{Full method} (\code{signed\_amplitudes}): the many-body amplitudes $\bra j\hat U\ket k$ of the Gaussian (BCS) states from the
+single-particle propagator $S_T$ applied to all $2N$ occupied quasiparticles, via the generalized Wick theorem (a Pfaffian). Gives in
+addition the probability that the bulk stays unexcited. Needs the dense $4N\times4N$ propagator.
+\item \textbf{Reduced method} (\code{braid\_matrix}, \code{logical\_unitary}): only the zero-mode block, the real $4\times4$ Majorana matrix
+$M_{ij} = \bra{\gamma_i(0)}S_T\ket{\gamma_j(0)}$ and its spin representation. Needs only the two evolved mode vectors, so it works with
+MPS (and with sparse propagators); it cannot see bulk excitations.
+\end{itemize}
+
+\subsection{Workflow and inputs}
+
+\begin{center}\code{msh\_tjunctions\_tn.ipynb} (TDVP caches) $\to$ \code{logical\_gates\_tn.ipynb} $\to$ \code{logical\_gates\_tn.csv} $\to$ \code{logical\_gates\_python\_ed.ipynb}\end{center}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{lX}
+\toprule
+File & Role\\
+\midrule
+\code{msh\_tjunctions\_tdvp\_\{Z,X\}.jls} & TDVP results of \code{msh\_tjunctions\_tn.ipynb} (section 6), including the overlaps $z_{ik}(t) = \bra{\gamma_i(0)}\psi_k(t)\rangle$ at every snapshot. Not committed (\code{*.jls}); about 2.5 h of TDVP with six threads to create.\\
+\code{logical\_gates\_tn.csv} & $M$ and the leakage per gate and stage, from the TN notebook; committed; read by the Python notebook.\\
+\code{logical\_gates\_python\_ed\_data/frames.npz} & initial frame $\psi_0$ and the evolved frames after one and two exchanges; not committed; recomputed when missing or with \code{RUN\_EVOLUTION = True}.\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Results}
+
+\begin{center}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lcccccc}
+\toprule
+Gate & $P(00\to11)$ & $\theta$ & best ideal gate (overlap) & unexcited prob. & full vs reduced & $\max\bigl||M_{\rm TN}| - |M_{\rm ED}|\bigr|$\\
+\midrule
+$\sqrt{Z}{}^\dagger$ (one \code{exchange\_12}) & 0 & $90.7180^\circ$ & $\sqrt{Z}{}^\dagger$ (0.999980) & 0.999998 & $3.3\times10^{-12}$ & $4.9\times10^{-9}$\\
+$Z$ (two) & 0 & $178.5641^\circ$ & $Z$ (0.999921) & 0.999997 & $1.0\times10^{-11}$ & $8.5\times10^{-9}$\\
+$\sqrt{X}{}^\dagger$ (one \code{exchange\_23}) & 0.522078 & $92.5308^\circ$ & $\sqrt{X}{}^\dagger$ (0.999756) & 0.999982 & $9.8\times10^{-8}$ & $1.6\times10^{-8}$\\
+$X$ (two) & 0.998051 & $174.9391^\circ$ & $X$ (0.999025) & 0.999964 & $4.2\times10^{-6}$ & $1.8\times10^{-8}$\\
+\bottomrule
+\end{tabular}}
+\end{center}
+
+$\theta$ is the rotation angle of the even block; the excess over $90^\circ$ (or $180^\circ$) is the hybridization phase $\int\varepsilon\,dt$
+of the exchanged pair. ``Full vs reduced'' is the largest entry-wise difference of the even block (full amplitudes divided by the square
+root of the unexcited probability, global phase removed); the TN and dense (ED) reduced gates agree in $|M|$, $P$, $\theta$ and the leakage.
+
+%======================================================================
+\section{Method}
+%======================================================================
+
+\subsection{Quasiparticle operators and the Majorana matrix}
+
+With the Nambu spinor $\Psi$ and $H = \tfrac12\Psi^\dagger H_{\rm BdG}\Psi$, the quasiparticle operator of a BdG vector $w$ is
+$b(w) = w^\dagger\Psi$. It is \emph{antilinear} in $w$: $b(c\,w) = c^*b(w)$. The Heisenberg evolution is $\hat U^\dagger\Psi\hat U = S_T\Psi$, with
+$S_T = \mathcal T e^{-i\int H_{\rm BdG}dt}$ the single-particle propagator, so
+\[
+\hat U^\dagger b(w)\hat U = b(S_T^\dagger w),\qquad \hat U b(w)\hat U^\dagger = b(S_Tw).
+\]
+For self-conjugate Majoranas ($C\gamma = \gamma$, $C$ the particle--hole conjugation) $\hat\gamma_j = b(\gamma_j)$ is Hermitian, and
+$\hat U\hat\gamma_j\hat U^\dagger = b(S_T\gamma_j) = \sum_i\hat\gamma_i M_{ij}$ with the real matrix $M_{ij} = \bra{\gamma_i}S_T\ket{\gamma_j}$ (real because
+$[S_T, C] = 0$). Without leakage out of the zero-mode subspace $M$ is orthogonal; $\|M^TM - 1\|$ measures the leakage.
+
+\subsection{Spin representation and the Jordan--Wigner convention}
+
+Restricted to the zero-mode Fock space, $\hat U$ acts as a unitary $\tilde U$ with $\tilde U\hat\gamma_j\tilde U^\dagger = \sum_i\hat\gamma_iM_{ij}$.
+With $M = e^A$ ($A$ real antisymmetric), $\tilde U = \exp(\tfrac14\sum_{ij}A_{ij}\hat\gamma_i\hat\gamma_j)$, up to a global phase and the sign
+of $A$ (SO(4) is double covered); the sign is fixed by checking the defining relation.
+
+The $\hat\gamma_i$ are represented on $\ket{n_An_B}$ by Jordan--Wigner, with $f_A = a\otimes1$, $f_B = Z\otimes a$. \textbf{The convention matters}:
+$f_m$ must annihilate the positive-energy mode $\psi_m$, so that $n_m = 1$ means $\psi_m$ occupied as in the full method. By antilinearity,
+\[
+b(\psi_m) = b\Bigl(\tfrac{\gamma_{2m-1} + i\gamma_{2m}}{\sqrt2}\Bigr) = \frac{\hat\gamma_{2m-1} - i\hat\gamma_{2m}}{\sqrt2}
+\quad\Rightarrow\quad \hat\gamma_{2m-1} = f_m + f_m^\dagger,\qquad \hat\gamma_{2m} = +i(f_m - f_m^\dagger).
+\]
+The opposite sign, $\hat\gamma_{2m} = -i(f_m - f_m^\dagger)$, used in the earlier \code{msh\_logical\_gate.jl} / \code{msh\_pfaffian} work,
+makes $f_m$ the creation operator of $\psi_m$: it swaps the labels $\ket{00}\leftrightarrow\ket{11}$ and conjugates every relative phase
+(one \code{exchange\_12} then appears as $\mathrm{diag}(1, e^{+i\,90.72^\circ})$ instead of $\mathrm{diag}(1, e^{-i\,90.72^\circ})$). The Python
+notebook checks the convention against the full Pfaffian amplitudes entry by entry (section~\ref{sec:fullvsred}).
+
+\subsection{Full method: generalized Wick theorem}
+
+A Gaussian state is a set of $2N$ occupied columns of the frame $\psi_0$ (the fixed BdG unitary of \code{fix\_unitary}: $\psi_A$, $\psi_B$ in columns
+$2N$, $2N+1$, their partners $C\psi$ in $2N-1$, $2N-2$). For occupations $k$, $\ket k = a^\dagger_{m_1}a^\dagger_{m_2}\cdots\ket{00}$ ($m_1<m_2$),
+where the creation operator of mode $m$ is $b(C\phi_m)$ and its adjoint $b(\phi_m)$, $\phi_m$ = column $2N+m$. Writing both states relative to a
+reference $\ket r$,
+\[
+\frac{\bra j\hat U\ket k}{\bra r\hat U\ket r} = \bra r X(r)\,X^\dagger(j)\,\hat U\,X(k)\,X^\dagger(r)\ket r_{\rm normalized},
+\]
+and moving the operators left of $\hat U$ through it with $S_T^\dagger$, the normalized expectation value of the operator string is the
+Pfaffian of the antisymmetric matrix of pairwise contractions
+\[
+C_{ij} = x_i^\dagger(1-\rho)\,Cx_j,\qquad 1-\rho = 1 - W_rG^{-1}W_L^\dagger,\quad W_L = S_T^\dagger W_r,\quad G = W_L^\dagger W_r,
+\]
+with $W_r$ the occupied columns of $\ket r$. $1-\rho$ is the mixed (transition) density between $\bra r$ and $\hat U\ket r$; this is where the
+whole occupied frame and its evolution enter. $|\bra r\hat U\ket r| = |\det G|^{1/2}$; its sign is not fixed but common to all amplitudes,
+so moduli and relative phases are meaningful and the global phase is not. The probability of staying unexcited for input $k$ is
+$\sum_j|\bra j\hat U\ket k|^2$ over the logical outputs $j$ (odd outputs vanish by parity).
+
+%======================================================================
+\section{Part I --- \code{logical\_gates\_tn.ipynb} (Julia)}
+%======================================================================
+
+No time evolution: everything is $4\times4$ algebra on the overlaps cached by \code{msh\_tjunctions\_tn.ipynb}; the notebook runs in seconds.
+
+\subsection{Section 1: setup and the cached overlaps}
+
+\begin{function}{T1}
+Duration of one exchange, as \code{duration} in \code{msh\_tjunctions\_tn.ipynb}: $T_1 = (0.1\,(4L_1 + 2L_2 + 8) + 1)\cdot200 = 2040$ for
+\code{exchange\_12} and $(0.1\,(L_1 + 3L_2 + 2L_1 + 3) + 1)\cdot400 = 3880$ for \code{exchange\_23} with $L_1 = L_2 = 14$.
+\end{function}
+
+\begin{function}{runs, overlaps(kind, t)}
+\code{runs[kind]} is the deserialized cache \code{msh\_tjunctions\_tdvp\_\$kind.jls} (\code{kind} = \code{"Z"} or \code{"X"}); a missing cache
+stops the notebook with an instruction to run \code{msh\_tjunctions\_tn.ipynb} first. \code{overlaps(kind, t)} returns the $4\times2$ matrix
+$z_{ik} = \bra{\gamma_i(0)}\psi_k(t)\rangle$ at the snapshot $t$ (an error if there is none; snapshots are every 5 time units during the gate,
+so $T_1$ and $2T_1$ are included). Printed: $T_1 = 2040$ (Z, snapshots to $t = 4460$) and $3880$ (X, to $8140$).
+\end{function}
+
+\subsection{Section 2: from the Majorana matrix to the logical gate}
+
+\begin{function}{braid\_matrix(z)}
+$M$ from the overlaps. With $\psi_k = (\gamma_{2k-1} + i\gamma_{2k})/\sqrt2$, $C\gamma = \gamma$ and $[S_T, C] = 0$:
+$\gamma_{2k-1}(T) = (\psi_k(T) + C\psi_k(T))/\sqrt2$, $\gamma_{2k}(T) = (\psi_k(T) - C\psi_k(T))/(i\sqrt2)$, and
+$\bra{\gamma_i}C\psi\rangle = \bra\psi\gamma_i\rangle = z_{ik}^*$, so
+\[
+M_{i,2k-1} = \sqrt2\,\mathrm{Re}\,z_{ik},\qquad M_{i,2k} = \sqrt2\,\mathrm{Im}\,z_{ik}.
+\]
+Only $\psi_A(T)$ and $\psi_B(T)$ are needed: the TDVP never evolves the partners, which follow from $C$ exactly.
+\end{function}
+
+\begin{function}{jw\_majoranas()}
+The four $\hat\gamma_i$ as $4\times4$ matrices on $\ket{n_An_B}$, order $00, 01, 10, 11$: $f_A = a\otimes1$, $f_B = Z\otimes a$ with $a = \ket0\bra1$,
+$\hat\gamma_{2m-1} = f_m + f_m^\dagger$, $\hat\gamma_{2m} = +i(f_m - f_m^\dagger)$ (the convention of section 2.2).
+\end{function}
+
+\begin{function}{logical\_unitary(M)}
+Replaces $M$ by its nearest orthogonal matrix $M_o = UV^T$ (SVD; this renormalizes away the leakage), requires $\det M_o > 0$ (a
+parity-preserving rotation), takes $A = \log M_o$ (antisymmetrized), and for both signs of $A$ forms $\tilde U = \exp(\pm\tfrac14\sum A_{ij}\hat\gamma_i\hat\gamma_j)$,
+keeping the one with the smaller residual $\max_j\|\tilde U\hat\gamma_j\tilde U^\dagger - \sum_i\hat\gamma_iM_{o,ij}\|$. Returns $(\tilde U, \text{residual})$;
+the residuals are $(1$--$3)\times10^{-15}$.
+\end{function}
+
+\begin{function}{IDEAL, logical\_even\_block(Ũ)}
+\code{IDEAL} lists the ideal gates $\sqrt X = e^{-i\pi X/4}$, $\sqrt{X}{}^\dagger$, $X$, $\sqrt Z = \mathrm{diag}(1, i)$, $\sqrt{Z}{}^\dagger$, $Z$.
+\code{logical\_even\_block} takes the even block $U_L$ of $\tilde U$ on $\{\ket{00},\ket{11}\}$, normalizes $W = U_L/\sqrt{\det U_L}$ and reads off the
+rotation angle and axis from $W = \cos\frac\theta2 - i\sin\frac\theta2\,\hat n\cdot\boldsymbol\sigma$; it returns $U_L$, $\theta$, $\hat n$,
+$P(00\to11) = |U_{L,21}|^2$ and the global-phase-insensitive overlaps $|\mathrm{Tr}(V^\dagger U_L)|/2$ with every ideal gate $V$.
+\end{function}
+
+\paragraph{Check.} An ideal braid $\gamma_2\to\gamma_3$, $\gamma_3\to-\gamma_2$ gives residual $8\times10^{-16}$, $\theta = 90^\circ$, $\hat n = (-1, 0, 0)$:
+exactly $\sqrt{X}{}^\dagger$ (overlap 1.000000).
+
+\subsection{Section 3: logical gates after one and two exchanges}
+
+For $(Z, T_1)$, $(Z, 2T_1)$, $(X, T_1)$, $(X, 2T_1)$: $M$ from \code{braid\_matrix(overlaps(...))}, the leakage $1-\sum_i|z_{ik}|^2$ of each mode,
+$\|M^TM - 1\|$, the spin-representation residual, $P(00\to11)$, $\theta$, $\hat n$ and the ideal-gate overlaps. Printed values:
+
+\begin{center}
+\begin{tabular}{lcccccl}
+\toprule
+Gate & $t$ & leak $(\psi_A, \psi_B)$ & $\|M^TM-1\|$ & $P(00\to11)$ & $\theta$ & $\hat n$\\
+\midrule
+$\sqrt{Z}{}^\dagger$ & 2040 & $(9.72\times10^{-7}, 1.65\times10^{-11})$ & $1.4\times10^{-6}$ & 0 & $90.7180^\circ$ & $(0, 0, -1)$\\
+$Z$ & 4080 & $(1.99\times10^{-6}, 2.07\times10^{-11})$ & $2.8\times10^{-6}$ & 0 & $178.5641^\circ$ & $(0, 0, 1)$\\
+$\sqrt{X}{}^\dagger$ & 3880 & $(3.49\times10^{-5}, 1.23\times10^{-7})$ & $7.0\times10^{-5}$ & 0.522078 & $92.5308^\circ$ & $(-1, 0, 0)$\\
+$X$ & 7760 & $(3.42\times10^{-5}, 3.49\times10^{-5})$ & $1.0\times10^{-4}$ & 0.998051 & $174.9391^\circ$ & $(1, 0, 0)$\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The ideal-gate overlaps are $0.999980$ ($\sqrt{Z}{}^\dagger$), $0.999921$ ($Z$), $0.999756$ ($\sqrt{X}{}^\dagger$) and $0.999025$ ($X$). One
+\code{exchange\_12} leaves pair B untouched (its leakage stays at $10^{-11}$); one \code{exchange\_23} acts on both pairs.
+
+\subsection{Section 4: export}
+
+\code{logical\_gates\_tn.csv}: columns \code{gate, stage, t, leak\_A, leak\_B, M11 \dots M44} (row-major), one row per gate and stage.
+
+%======================================================================
+\section{Part II --- \code{logical\_gates\_python\_ed.ipynb} (Python)}
+%======================================================================
+
+\subsection{Code from \code{tjunctions\_model.py}}
+
+The notebook imports the model (\code{from tjunctions\_model import *}); these functions are documented in Part II of the T-junction
+reference and only summarized here.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{lX}
+\toprule
+Name & Role here\\
+\midrule
+\code{H0}, \code{ham(f)}, \code{ham\_sp(f)} & $H_{\rm BdG}$ of the initial texture $f_0$; dense and sparse $H$ for a texture $f(c,s,n)$\\
+\code{Exchange12}, \code{Exchange23}, \code{f\_array\_12}, \code{f\_array\_23} & the two protocols (durations, textures)\\
+\code{zero\_mode\_frame(H)} & \code{eigh}, \code{individual\_MZMs} (Takagi + localization), \code{fix\_unitary}: the fixed frame $\psi_0$ with $\psi_A$, $\psi_B$ in columns $2N$, $2N+1$ and partners in $2N-1$, $2N-2$\\
+\code{step(psi, t, dt, ft)}, \code{DT} & 2-stage Gauss--Legendre step (sparse LU), $dt = 0.25$\\
+\code{Cop(v)} & particle--hole conjugation of the kwant spinor, $C = \tau_y\sigma_yK$\\
+\code{N}, \code{xs} & 144 sites; $x$ coordinate of each site\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Section 1: setup}
+
+Cell 1 sets \code{OMP\_NUM\_THREADS}, \code{OPENBLAS\_NUM\_THREADS}, \code{MKL\_NUM\_THREADS} to 1 before NumPy is imported (single thread,
+as in \code{tjunctions\_python\_ed.ipynb}), imports the model and builds \code{psi0, E0, mbs, mask = zero\_mode\_frame(H0)}; \code{states} lists
+the occupations $(0,0), (0,1), (1,0), (1,1)$. Printed: $N = 144$, $D = 576$, $\|\psi_0^\dagger\psi_0 - 1\| = 6.5\times10^{-14}$, mode energies
+$1.09\times10^{-9}$ and $1.16\times10^{-9}$.
+
+\subsection{Section 2: time evolution of the full frame}
+
+\begin{function}{T1, gate\_f}
+$T_1$ from \code{p12.duration()} and \code{p23.duration()} (\code{Exchange23(rot\_T=400.0)}); \code{gate\_f[kind](t)} is the texture of two
+consecutive exchanges, the second one starting at $T_1$.
+\end{function}
+
+\begin{function}{evolve\_frame(ft, psi, t0, t1, dt=DT)}
+Evolves the whole $4N\times4N$ frame from $t_0$ to $t_1$ with \code{step}, renormalizing the columns after each step: \code{evolve} of
+\code{tjunctions\_python\_ed.ipynb} without the readout.
+\end{function}
+
+\paragraph{Cache.} If \code{frames.npz} is missing or \code{RUN\_EVOLUTION = True}, both gates are evolved and saved after one and two exchanges
+(\code{Z1, Z2, X1, X2}) together with $\psi_0$. When loading, the notebook uses the cached $\psi_0$ (the phases of degenerate bulk eigenvectors
+from \code{eigh} depend on the BLAS build and threads, so a recomputed $\psi_0$ need not match bit for bit) and checks that it is an eigenframe of
+$H_0$ whose zero-mode columns equal those of \code{zero\_mode\_frame(H0)}. The propagators are $S_T = \psi(T)\psi_0^\dagger$; printed
+$\|S_T^\dagger S_T - 1\| = 4\times10^{-12}$ to $1.3\times10^{-11}$. Evolution times of the cached run: Z 692~s, X 1363~s (single thread, measured
+while other jobs ran on the machine).
+
+\subsection{Section 3: full method}
+
+\begin{function}{pfaffian(A)}
+Pfaffian of a complex antisymmetric matrix by Parlett--Reid elimination with pivoting: columns in pairs $(k, k+1)$; the largest entry of column
+$k$ below the diagonal is swapped into row and column $k+1$ (each swap flips the sign); the pivot $A_{k,k+1}$ is a factor; the trailing block gets
+the antisymmetric rank-2 update $A \leftarrow A + \tau a^T - a\tau^T$, $\tau = A_{k,k+2:}/A_{k,k+1}$. Check: $|\mathrm{Pf}(A)^2 - \det A| = 3.7\times10^{-11}$
+for a random $8\times8$ matrix.
+\end{function}
+
+\begin{function}{Cvec, mask\_of(bits)}
+\code{Cvec = Cop}. \code{mask\_of} marks columns $2N + m$ with $n_m = 1$ and mirrors: column $2N-1-m$ is occupied exactly when $2N+m$ is empty, so
+every state occupies $2N$ columns (the CZ notebooks' \code{masks[:, :2N] = flip(\textasciitilde masks[:, 2N:])}).
+\end{function}
+
+\begin{function}{signed\_amplitudes(pairs, S\_T, psi0, candidates=states)}
+$\bra j\hat U\ket k$ for all $(j, k)$ in \code{pairs}, up to one common sign (section 2.3). The reference $r$ is the candidate with the largest
+$|\det(W_r^\dagger S_TW_r)|$; $W_L = S_T^\dagger W_r$, $G = W_L^\dagger W_r$, \code{norm\_r} $= |\det G|^{1/2}$. For each pair the operator vectors are
+$S_T^\dagger X(r)$, $S_T^\dagger X^\dagger(j)$, $X(k)$, $X^\dagger(r)$ with $X(\text{bits}) = [C\phi_m]$ for occupied $m$ (ascending) and $X^\dagger = [\phi_m]$
+(descending); the contraction matrix is $P^\dagger CP - (P^\dagger W_r)G^{-1}(W_L^\dagger CP)$ (the $4N\times4N$ mixed density is never formed),
+its strict upper triangle antisymmetrized, and the amplitude is its Pfaffian times \code{norm\_r}. An empty string gives \code{norm\_r}.
+Returns the amplitudes, $r$ and \code{norm\_r}. This is \code{projected\_amplitudes} of \code{period\_finding\_signed\_amplitudes.py} without
+mid-protocol projections.
+\end{function}
+
+\paragraph{Checks and references.} With $S_T = 1$, $\max|A_{jk} - \delta_{jk}| = 3.9\times10^{-15}$. References chosen:
+$r = (0,1)$ with $|\bra r\hat U\ket r| = 0.999999$ for Z1 and Z2, $0.691313$ for X1, and $r = (0,0)$ with $0.044149$ for X2 (an $X$ gate empties the
+diagonal; the amplitudes are still consistent, see below).
+
+\subsection{Section 4: reduced method}
+
+\begin{function}{gamma0, braid\_matrix(S\_T)}
+\code{gamma0} holds $\gamma_{2k-1} = (\psi_k + C\psi_k)/\sqrt2$ and $\gamma_{2k} = (\psi_k - C\psi_k)/(i\sqrt2)$ from the frame (the same convention as the
+TN notebook); printed $\|\gamma^\dagger\gamma - 1\| = 2.3\times10^{-15}$, $\max\|C\gamma - \gamma\| = 0$, centres $x = -46.6, -17.5, 16.5, 45.6$.
+\code{braid\_matrix} returns $\mathrm{Re}\,(\gamma^\dagger S_T\gamma)$ and $\max|\mathrm{Im}|$ ($\le 2.3\times10^{-15}$).
+\end{function}
+
+\begin{function}{jw\_majoranas(), logical\_unitary(M), IDEAL, logical\_even\_block(U)}
+The functions of Part I in Python (\code{scipy.linalg.logm}, \code{expm}, \code{svd}), with the same Jordan--Wigner convention. Residuals
+$\le 2.4\times10^{-15}$; $\|M^TM - 1\|$ as in the TN notebook.
+\end{function}
+
+\subsection{Section 5: full vs reduced}\label{sec:fullvsred}
+
+Per gate and stage: the even-block probabilities of the full method, the unexcited probability per input, the full probabilities
+renormalized by it, the reduced probabilities, the diagonal (and, for $X$-type gates, off-diagonal) relative phases of both methods, and
+the whole even block entry by entry: $\max|U_{\rm full}/\sqrt{P_{\rm stay}} - \tilde U|$ after removing the global phase (fixed on the largest
+entry).
+
+\begin{center}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lcccc}
+\toprule
+Gate & unexcited prob. & $\arg\bra{11}\hat U\ket{11} - \arg\bra{00}\hat U\ket{00}$ & $\arg\bra{11}\hat U\ket{00} - \arg\bra{00}\hat U\ket{00}$ & even block\\
+ & & full / reduced & full / reduced & entry by entry\\
+\midrule
+$\sqrt{Z}{}^\dagger$ & 0.999998 & $-90.7180^\circ$ / $-90.7180^\circ$ & -- & $3.3\times10^{-12}$\\
+$Z$ & 0.999997 & $+178.5641^\circ$ / $+178.5641^\circ$ & -- & $1.0\times10^{-11}$\\
+$\sqrt{X}{}^\dagger$ & 0.999982 & $-0.0002^\circ$ / $-0.0002^\circ$ & $+89.9999^\circ$ / $+89.9999^\circ$ & $9.8\times10^{-8}$\\
+$X$ & 0.999964 & $+0.0050^\circ$ / $+0.0050^\circ$ & $-89.9920^\circ$ / $-89.9975^\circ$ & $4.2\times10^{-6}$\\
+\bottomrule
+\end{tabular}}
+\end{center}
+
+The renormalized full probabilities equal the reduced ones to $3.5\times10^{-29}$ (Z) and $1$--$3\times10^{-11}$ (X). The remaining entry-wise
+differences of the $X$-type gates ($10^{-7}$--$10^{-6}$) are of the order of the bulk excitation ($1 - P_{\rm stay} = 1.8\times10^{-5}$ and
+$3.6\times10^{-5}$), which only the full method contains. With the opposite Jordan--Wigner sign the phases come out conjugated and the entry-wise
+difference is of order 1.
+
+\subsection{Section 6: comparison with the tensor-network gates}
+
+Reads \code{logical\_gates\_tn.csv}, rebuilds $\tilde U$ from $M_{\rm TN}$ with the Python \code{logical\_unitary}, and compares quantities that do
+not depend on the sign of each $\gamma$ (fixed independently in the two codes): $\max\bigl||M_{\rm TN}| - |M_{\rm ED}|\bigr|$, $P(00\to11)$, $\theta$ and the
+leakage $1 - \sum_i|\bra{\gamma_i}S_T\psi_k\rangle|^2$.
+
+\begin{center}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lccccc}
+\toprule
+Gate & $\max\bigl||M_{\rm TN}|-|M_{\rm ED}|\bigr|$ & $P(00\to11)$ TN / ED & $\theta$ TN / ED & leak TN $(A, B)$ & leak ED $(A, B)$\\
+\midrule
+$\sqrt{Z}{}^\dagger$ & $4.9\times10^{-9}$ & 0 / 0 & $90.7180^\circ$ / $90.7180^\circ$ & $(9.72\times10^{-7}, 1.7\times10^{-11})$ & $(9.74\times10^{-7}, 0)$\\
+$Z$ & $8.5\times10^{-9}$ & 0 / 0 & $178.5641^\circ$ / $178.5641^\circ$ & $(1.99\times10^{-6}, 2.1\times10^{-11})$ & $(2.00\times10^{-6}, 0)$\\
+$\sqrt{X}{}^\dagger$ & $1.6\times10^{-8}$ & 0.522078 / 0.522078 & $92.5308^\circ$ / $92.5308^\circ$ & $(3.49\times10^{-5}, 1.23\times10^{-7})$ & $(3.49\times10^{-5}, 1.24\times10^{-7})$\\
+$X$ & $1.8\times10^{-8}$ & 0.998051 / 0.998051 & $174.9391^\circ$ / $174.9391^\circ$ & $(3.42\times10^{-5}, 3.49\times10^{-5})$ & $(3.42\times10^{-5}, 3.49\times10^{-5})$\\
+\bottomrule
+\end{tabular}}
+\end{center}
+
+The MPS/TDVP evolution of the two mode vectors (bond dimension $\le 64$, $dt = 0.1$) and the dense Gauss--Legendre evolution of the full
+frame ($dt = 0.25$) give the same logical gates to $\sim10^{-8}$; the TN route needs only the two vectors and no dense matrix.
+
+%======================================================================
+\section{\code{tjunctions\_model.py}}
+%======================================================================
+
+The Python model of the array, moved out of \code{tjunctions\_python\_ed.ipynb} (whose outputs are unchanged by the move) so that both Python
+notebooks use one copy. Contents, in order: environment variables for single-thread BLAS (effective only if the module is imported before
+NumPy; the notebooks also set them in their first cell); Pauli matrices and their Kronecker products; geometry (\code{NLEG}, \code{NCELL},
+\code{center\_x}, \code{array\_pos}, \code{label}, \code{build\_system\_3T}, and the module-level \code{sys}, \code{N}, \code{tags}, \code{xs}, \code{ys});
+textures and protocols (\code{smoothstep}, \code{f0}, \code{spins}, \code{Exchange12}, \code{Exchange23}, \code{Fusion} and their texture functions);
+the Hamiltonian (\code{params}, \code{ham\_kwant}, \code{H\_noJ}, \code{exchange\_matrix}, \code{ham}, \code{Cop}, \code{H0}); the zero-mode
+construction (\code{dag}, \code{PHconj}, \code{takagi}, \code{individual\_MZMs}, \code{fix\_unitary}); two functions added with the move,
+\code{zero\_mode\_frame(H)} (returns \code{psi0, E, mbs, mask}) and \code{logical\_masks()} (the $4\times4N$ masks of $\ket{00}$, $\ket{01}$, $\ket{10}$,
+$\ket{11}$); the sparse Hamiltonian and Gauss--Legendre step (\code{exchange\_sparse}, \code{ham\_sp}, \code{step}, \code{DT}); and
+\code{electron\_density(W)}. All are described in Part II of \code{docs/msh\_tjunctions\_function\_reference.pdf}.
+
+\end{document}

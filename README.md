@@ -29,6 +29,7 @@ settings, and the printed results and figures.
 | `docs/kitaev_charge_difference_function_reference.pdf` | `kitaev_charge_difference.ipynb` |
 | `docs/msh_chain_function_reference.pdf` | `msh_chain_tn.ipynb`, `msh_chain_python_ed.ipynb`, `msh_chain_compare.ipynb`, and the TensorBinding routines they use |
 | `docs/msh_tjunctions_function_reference.pdf` | `msh_tjunctions_tn.ipynb`, `tjunctions_python_ed.ipynb`, `tjunctions_compare.ipynb` |
+| `docs/msh_logical_gates_function_reference.pdf` | `logical_gates_tn.ipynb`, `logical_gates_python_ed.ipynb`, `tjunctions_model.py` |
 
 `tjunctions_model.py` holds the Python model of the T-junction array (geometry, kwant system, protocols, Hamiltonian, zero-mode
 construction and the Gauss–Legendre step), imported by `tjunctions_python_ed.ipynb` and `logical_gates_python_ed.ipynb`.
