@@ -91,7 +91,7 @@ File & Role\\
 \resizebox{\textwidth}{!}{%
 \begin{tabular}{lcccccc}
 \toprule
-Gate & $P(00\to11)$ & $\theta$ & best ideal gate (overlap) & unexcited prob. & full vs reduced & $\max\bigl||M_{\rm TN}| - |M_{\rm ED}|\bigr|$\\
+Gate & $P(00\to11)$ & rotation $\theta$ & best ideal gate (overlap) & unexcited prob. & full vs reduced & $\max\bigl||M_{\rm TN}| - |M_{\rm ED}|\bigr|$\\
 \midrule
 $\sqrt{Z}{}^\dagger$ (one \code{exchange\_12}) & 0 & $90.7180^\circ$ & $\sqrt{Z}{}^\dagger$ (0.999980) & 0.999998 & $3.3\times10^{-12}$ & $4.9\times10^{-9}$\\
 $Z$ (two) & 0 & $178.5641^\circ$ & $Z$ (0.999921) & 0.999997 & $1.0\times10^{-11}$ & $8.5\times10^{-9}$\\
@@ -101,8 +101,12 @@ $X$ (two) & 0.998051 & $174.9391^\circ$ & $X$ (0.999025) & 0.999964 & $4.2\times
 \end{tabular}}
 \end{center}
 
-$\theta$ is the rotation angle of the even block; the excess over $90^\circ$ (or $180^\circ$) is the hybridization phase $\int\varepsilon\,dt$
-of the exchanged pair. ``Full vs reduced'' is the largest entry-wise difference of the even block (full amplitudes divided by the square
+$\theta$ is \textbf{not a phase}: it is the angle by which the gate rotates the logical Bloch sphere, $U_L\propto e^{-i\theta\,\hat n\cdot\boldsymbol\sigma/2}$
+(axes $\hat n = -\hat z$, $+\hat z$, $-\hat x$, $+\hat x$ for the four rows); for the $X$-type gates it sets the amplitudes,
+$P(00\to11) = \sin^2\frac\theta2$. The excess over $90^\circ$ (or $180^\circ$) is the hybridization phase $\int\varepsilon\,dt$ of the exchanged pair.
+The relative phases are $\varphi_d = \arg\bra{11}\hat U\ket{11} - \arg\bra{00}\hat U\ket{00} = -90.7180^\circ$ ($\sqrt{Z}{}^\dagger$) and $+178.5641^\circ$ ($Z$), and
+$\varphi_o = \arg\bra{11}\hat U\ket{00} - \arg\bra{00}\hat U\ket{11} = 0.0000^\circ$ for both $X$-type gates, as for any rotation about $\pm\hat x$
+(section 3.2). ``Full vs reduced'' is the largest entry-wise difference of the even block (full amplitudes divided by the square
 root of the unexcited probability, global phase removed); the TN and dense (ED) reduced gates agree in $|M|$, $P$, $\theta$ and the leakage.
 
 %======================================================================
@@ -201,11 +205,28 @@ keeping the one with the smaller residual $\max_j\|\tilde U\hat\gamma_j\tilde U^
 the residuals are $(1$--$3)\times10^{-15}$.
 \end{function}
 
-\begin{function}{IDEAL, logical\_even\_block(Ũ)}
+\begin{function}{IDEAL, logical\_even\_block(Ũ), deg(x)}
 \code{IDEAL} lists the ideal gates $\sqrt X = e^{-i\pi X/4}$, $\sqrt{X}{}^\dagger$, $X$, $\sqrt Z = \mathrm{diag}(1, i)$, $\sqrt{Z}{}^\dagger$, $Z$.
-\code{logical\_even\_block} takes the even block $U_L$ of $\tilde U$ on $\{\ket{00},\ket{11}\}$, normalizes $W = U_L/\sqrt{\det U_L}$ and reads off the
-rotation angle and axis from $W = \cos\frac\theta2 - i\sin\frac\theta2\,\hat n\cdot\boldsymbol\sigma$; it returns $U_L$, $\theta$, $\hat n$,
-$P(00\to11) = |U_{L,21}|^2$ and the global-phase-insensitive overlaps $|\mathrm{Tr}(V^\dagger U_L)|/2$ with every ideal gate $V$.
+\code{logical\_even\_block} takes the even block $U_L$ of $\tilde U$ on $\{\ket{00},\ket{11}\}$ (the logical qubit) and describes it in two
+complementary ways.
+\begin{itemize}
+\item \textbf{Rotation angle $\theta$ and axis $\hat n$ (not phases).} With the global phase removed,
+$W = U_L/\sqrt{\det U_L} = \cos\frac\theta2 - i\sin\frac\theta2\,\hat n\cdot\boldsymbol\sigma = e^{-i\theta\,\hat n\cdot\boldsymbol\sigma/2}$: the gate rotates the
+logical Bloch sphere by $\theta$ about $\hat n$. $\theta = 2\arccos(\mathrm{Re}\,\mathrm{Tr}\,W/2)$, $\hat n_k = \mathrm{Re}(i\,\mathrm{Tr}\,\sigma_kW)/(2\sin\frac\theta2)$.
+Ideal values: $\sqrt X$: $\theta = 90^\circ$, $\hat n = \hat x$ ($\sqrt{X}{}^\dagger$: $-\hat x$); $X$: $180^\circ$; $\mathrm{diag}(1, e^{i\varphi})$: $\theta = |\varphi|$,
+$\hat n = \mp\hat z$. The amplitudes follow from it, $P(00\to11) = |U_{L,21}|^2 = \sin^2\frac\theta2\,(1 - \hat n_z^2)$ (printed as a check).
+$(\theta, \hat n)$ and $(360^\circ - \theta, -\hat n)$ are the same gate up to a global sign; the code reports the pair given by the principal
+$\sqrt{\det U_L}$. Two over-rotated $\sqrt{X}{}^\dagger$ exchanges ($2\times92.53^\circ = 185.06^\circ$ about $-\hat x$) therefore appear as
+$\theta = 174.94^\circ$ about $+\hat x$.
+\item \textbf{Relative phases} $\varphi_d = \arg U_{L,22} - \arg U_{L,11} = \arg\bra{11}\hat U\ket{11} - \arg\bra{00}\hat U\ket{00}$ (the gate phase of a
+diagonal gate) and $\varphi_o = \arg U_{L,21} - \arg U_{L,12} = \arg\bra{11}\hat U\ket{00} - \arg\bra{00}\hat U\ket{11}$ (between the off-diagonal elements),
+in degrees, \code{NaN} (printed ``--'' by \code{deg}) when the elements vanish. For a rotation about an axis in the $xy$ plane at azimuth
+$\phi$, $U_{L,21}/U_{L,12} = e^{2i\phi}$, so $\varphi_o = 2\phi$: $0$ for every rotation about $\pm\hat x$, whatever $\theta$, and $180^\circ$ about $\pm\hat y$.
+Both phases are independent of the global phase and of the sign convention of $\ket{11}$.
+\end{itemize}
+The phase of an off-diagonal element relative to a diagonal one, $\arg\bra{11}\hat U\ket{00} - \arg\bra{00}\hat U\ket{00}$, is $\pm90^\circ$ for a rotation
+about $\hat x$, with the sign of $\cos\frac\theta2$: it flips when the rotation passes $180^\circ$ and is undefined for an exact $X$, whose diagonal
+vanishes, so it is not used. Finally the function returns the global-phase-insensitive overlaps $|\mathrm{Tr}(V^\dagger U_L)|/2$ with every ideal gate $V$.
 \end{function}
 
 \paragraph{Check.} An ideal braid $\gamma_2\to\gamma_3$, $\gamma_3\to-\gamma_2$ gives residual $8\times10^{-16}$, $\theta = 90^\circ$, $\hat n = (-1, 0, 0)$:
@@ -214,19 +235,21 @@ exactly $\sqrt{X}{}^\dagger$ (overlap 1.000000).
 \subsection{Section 3: logical gates after one and two exchanges}
 
 For $(Z, T_1)$, $(Z, 2T_1)$, $(X, T_1)$, $(X, 2T_1)$: $M$ from \code{braid\_matrix(overlaps(...))}, the leakage $1-\sum_i|z_{ik}|^2$ of each mode,
-$\|M^TM - 1\|$, the spin-representation residual, $P(00\to11)$, $\theta$, $\hat n$ and the ideal-gate overlaps. Printed values:
+$\|M^TM - 1\|$, the spin-representation residual, $P(00\to11)$ with the check $\sin^2\frac\theta2(1-\hat n_z^2)$ (equal to six digits), the
+rotation $\theta$ about $\hat n$, the relative phases $\varphi_d$, $\varphi_o$ and the ideal-gate overlaps. Printed values:
 
 \begin{center}
-\begin{tabular}{lcccccl}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lcccccccc}
 \toprule
-Gate & $t$ & leak $(\psi_A, \psi_B)$ & $\|M^TM-1\|$ & $P(00\to11)$ & $\theta$ & $\hat n$\\
+Gate & $t$ & leak $(\psi_A, \psi_B)$ & $\|M^TM-1\|$ & $P(00\to11)$ & rotation $\theta$ & $\hat n$ & $\varphi_d$ & $\varphi_o$\\
 \midrule
-$\sqrt{Z}{}^\dagger$ & 2040 & $(9.72\times10^{-7}, 1.65\times10^{-11})$ & $1.4\times10^{-6}$ & 0 & $90.7180^\circ$ & $(0, 0, -1)$\\
-$Z$ & 4080 & $(1.99\times10^{-6}, 2.07\times10^{-11})$ & $2.8\times10^{-6}$ & 0 & $178.5641^\circ$ & $(0, 0, 1)$\\
-$\sqrt{X}{}^\dagger$ & 3880 & $(3.49\times10^{-5}, 1.23\times10^{-7})$ & $7.0\times10^{-5}$ & 0.522078 & $92.5308^\circ$ & $(-1, 0, 0)$\\
-$X$ & 7760 & $(3.42\times10^{-5}, 3.49\times10^{-5})$ & $1.0\times10^{-4}$ & 0.998051 & $174.9391^\circ$ & $(1, 0, 0)$\\
+$\sqrt{Z}{}^\dagger$ & 2040 & $(9.72\times10^{-7}, 1.65\times10^{-11})$ & $1.4\times10^{-6}$ & 0 & $90.7180^\circ$ & $(0, 0, -1)$ & $-90.7180^\circ$ & --\\
+$Z$ & 4080 & $(1.99\times10^{-6}, 2.07\times10^{-11})$ & $2.8\times10^{-6}$ & 0 & $178.5641^\circ$ & $(0, 0, 1)$ & $+178.5641^\circ$ & --\\
+$\sqrt{X}{}^\dagger$ & 3880 & $(3.49\times10^{-5}, 1.23\times10^{-7})$ & $7.0\times10^{-5}$ & 0.522078 & $92.5308^\circ$ & $(-1, 0, 0)$ & $-0.0002^\circ$ & $0.0000^\circ$\\
+$X$ & 7760 & $(3.42\times10^{-5}, 3.49\times10^{-5})$ & $1.0\times10^{-4}$ & 0.998051 & $174.9391^\circ$ & $(1, 0, 0)$ & $+0.0050^\circ$ & $0.0000^\circ$\\
 \bottomrule
-\end{tabular}
+\end{tabular}}
 \end{center}
 
 The ideal-gate overlaps are $0.999980$ ($\sqrt{Z}{}^\dagger$), $0.999921$ ($Z$), $0.999756$ ($\sqrt{X}{}^\dagger$) and $0.999025$ ($X$). One
@@ -322,15 +345,15 @@ TN notebook); printed $\|\gamma^\dagger\gamma - 1\| = 2.3\times10^{-15}$, $\max\
 \code{braid\_matrix} returns $\mathrm{Re}\,(\gamma^\dagger S_T\gamma)$ and $\max|\mathrm{Im}|$ ($\le 2.3\times10^{-15}$).
 \end{function}
 
-\begin{function}{jw\_majoranas(), logical\_unitary(M), IDEAL, logical\_even\_block(U)}
-The functions of Part I in Python (\code{scipy.linalg.logm}, \code{expm}, \code{svd}), with the same Jordan--Wigner convention. Residuals
+\begin{function}{jw\_majoranas(), logical\_unitary(M), IDEAL, phases(UL), logical\_even\_block(U), deg}
+The functions of Part I in Python (\code{phases} computes $\varphi_d$, $\varphi_o$ of any $2\times2$ even block, used for both methods) (\code{scipy.linalg.logm}, \code{expm}, \code{svd}), with the same Jordan--Wigner convention. Residuals
 $\le 2.4\times10^{-15}$; $\|M^TM - 1\|$ as in the TN notebook.
 \end{function}
 
 \subsection{Section 5: full vs reduced}\label{sec:fullvsred}
 
 Per gate and stage: the even-block probabilities of the full method, the unexcited probability per input, the full probabilities
-renormalized by it, the reduced probabilities, the diagonal (and, for $X$-type gates, off-diagonal) relative phases of both methods, and
+renormalized by it, the reduced probabilities, the relative phases $\varphi_d$ and $\varphi_o$ (section 3.2) of both methods, and
 the whole even block entry by entry: $\max|U_{\rm full}/\sqrt{P_{\rm stay}} - \tilde U|$ after removing the global phase (fixed on the largest
 entry).
 
@@ -338,13 +361,13 @@ entry).
 \resizebox{\textwidth}{!}{%
 \begin{tabular}{lcccc}
 \toprule
-Gate & unexcited prob. & $\arg\bra{11}\hat U\ket{11} - \arg\bra{00}\hat U\ket{00}$ & $\arg\bra{11}\hat U\ket{00} - \arg\bra{00}\hat U\ket{00}$ & even block\\
+Gate & unexcited prob. & $\varphi_d = \arg\bra{11}\hat U\ket{11} - \arg\bra{00}\hat U\ket{00}$ & $\varphi_o = \arg\bra{11}\hat U\ket{00} - \arg\bra{00}\hat U\ket{11}$ & even block\\
  & & full / reduced & full / reduced & entry by entry\\
 \midrule
 $\sqrt{Z}{}^\dagger$ & 0.999998 & $-90.7180^\circ$ / $-90.7180^\circ$ & -- & $3.3\times10^{-12}$\\
 $Z$ & 0.999997 & $+178.5641^\circ$ / $+178.5641^\circ$ & -- & $1.0\times10^{-11}$\\
-$\sqrt{X}{}^\dagger$ & 0.999982 & $-0.0002^\circ$ / $-0.0002^\circ$ & $+89.9999^\circ$ / $+89.9999^\circ$ & $9.8\times10^{-8}$\\
-$X$ & 0.999964 & $+0.0050^\circ$ / $+0.0050^\circ$ & $-89.9920^\circ$ / $-89.9975^\circ$ & $4.2\times10^{-6}$\\
+$\sqrt{X}{}^\dagger$ & 0.999982 & $-0.0002^\circ$ / $-0.0002^\circ$ & $0.0000^\circ$ / $0.0000^\circ$ & $9.8\times10^{-8}$\\
+$X$ & 0.999964 & $+0.0050^\circ$ / $+0.0050^\circ$ & $0.0000^\circ$ / $0.0000^\circ$ & $4.2\times10^{-6}$\\
 \bottomrule
 \end{tabular}}
 \end{center}
@@ -352,7 +375,8 @@ $X$ & 0.999964 & $+0.0050^\circ$ / $+0.0050^\circ$ & $-89.9920^\circ$ / $-89.997
 The renormalized full probabilities equal the reduced ones to $3.5\times10^{-29}$ (Z) and $1$--$3\times10^{-11}$ (X). The remaining entry-wise
 differences of the $X$-type gates ($10^{-7}$--$10^{-6}$) are of the order of the bulk excitation ($1 - P_{\rm stay} = 1.8\times10^{-5}$ and
 $3.6\times10^{-5}$), which only the full method contains. With the opposite Jordan--Wigner sign the phases come out conjugated and the entry-wise
-difference is of order 1.
+difference is of order 1. Both methods give $\varphi_o = 0$ to the printed four decimals: the $X$-type gates are rotations about $\pm\hat x$, the
+departure from the ideal gates is only in the rotation angle ($92.53^\circ$ instead of $90^\circ$).
 
 \subsection{Section 6: comparison with the tensor-network gates}
 
