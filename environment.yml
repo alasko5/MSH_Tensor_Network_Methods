@@ -1,5 +1,5 @@
-# Python environment for the Python/kwant notebooks (msh_chain_python_ed, tjunctions_python_ed and the two
-# compare notebooks). Versions are those the saved outputs were produced with (numba: 0.68.0rc1 was used).
+# Python environment for the Python/kwant notebooks (msh_chain_python_ed, tjunctions_python_ed, the compare
+# notebooks and msh_substrate/). Versions are those the saved outputs were produced with (numba: 0.68.0rc1 was used).
 #   conda env create -f environment.yml
 #   conda activate msh-tn
 name: msh-tn
@@ -14,5 +14,6 @@ dependencies:
   - numba>=0.62
   - ipywidgets=8.1
   - tqdm
+  - python-mumps=0.0.4     # MUMPS 5.8 sparse direct solver (msh_substrate_python.ipynb)
   - ipykernel
   - jupyterlab
