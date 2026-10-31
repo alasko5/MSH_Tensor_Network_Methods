@@ -15,6 +15,9 @@ Python/kwant notebooks.
 | `msh_tjunctions_tn.ipynb` | Julia | Three-T-junction MSH array, with MPO/MPS methods only: MPO Hamiltonian (checked against the dense lattice matrix), subgap LDOS and Majoranas from DMRG, and the Z and X gates with partial-fusion readout (leakage of each mode, ΔQ, δn(x, t)) from TDVP. Ends with the cost of the tensor-network route and its scaling with system size. |
 | `tjunctions_python_ed.ipynb` | Python | kwant/exact-diagonalization reference for `msh_tjunctions_tn.ipynb`: same geometry and protocols. Checks that kwant builds the same Hamiltonian as the TensorBinding MPO (`tb_reference/`), then the subgap LDOS, and the Z and X gates with partial fusion in the construction of the CZ, QFT and period-finding notebooks (`individual_MZMs`, `fix_unitary`, logical-state masks, full-basis Gauss–Legendre evolution): leakage, ΔQ and δn(x, t), and the cost of the dense route. Writes `tjunctions_python_ed_data/`. |
 | `tjunctions_compare.ipynb` | Python | Number-by-number comparison of the two T-junction notebooks: LDOS, MPS/TDVP δn(x, t) and ΔQ(t), and the leakage and fusion quantities against the dense Python results (one ✓/✗ row each), plus the runtimes and the scaling of both methods with system size. |
+| `msh_substrate/msh_substrate_tn.ipynb` | Julia | MSH chain on a 2D superconducting substrate, as an MPO in a 2D quantics encoding: zero modes, fermion mode and ΔQ by penalized DMRG, and their cost (time, memory, bond dimensions) as the substrate grows to 2048 × 2048 sites, at two parameter points (zero modes confined to the chain, and leaking into the substrate). |
+| `msh_substrate/msh_substrate_python.ipynb` | Python | Dense and sparse reference for the substrate: dense `eigh`, and shift-invert Lanczos with SuperLU and with MUMPS; MUMPS memory and flop estimates; mask method vs single-mode charge difference; the μ × J × Δ scan that picks the second parameter point. |
+| `msh_substrate/msh_substrate_scaling.ipynb` | Python | Cost of the tensor network against dense and sparse methods with system size: time, memory, accuracy, bond dimensions, fitted scaling and the crossover, at both parameter points. |
 | `kitaev_charge_difference.ipynb` | Julia | Kitaev chain: fermion mode from the DMRG Majorana doublet, KPM LDOS, McWeeny bulk projector with ϵF = −(E_mode + E_gap)/2, ΔQ versus topological length, and a time-dependent smoothstep ramp that fuses the Majoranas (TDVP, with TDVP and McWeeny bulk densities). |
 
 ## Documentation
@@ -27,6 +30,7 @@ settings, and the printed results and figures.
 | `docs/kitaev_charge_difference_function_reference.pdf` | `kitaev_charge_difference.ipynb` |
 | `docs/msh_chain_function_reference.pdf` | `msh_chain_tn.ipynb`, `msh_chain_python_ed.ipynb`, `msh_chain_compare.ipynb`, and the TensorBinding routines they use |
 | `docs/msh_tjunctions_function_reference.pdf` | `msh_tjunctions_tn.ipynb`, `tjunctions_python_ed.ipynb`, `tjunctions_compare.ipynb` |
+| `docs/msh_substrate_function_reference.pdf` | the three notebooks in `msh_substrate/` |
 
 The LaTeX sources are in `docs/src/`; `docs/src/build.sh` rebuilds the PDFs from them and the notebook outputs (see
 `docs/src/README.md`).
@@ -40,6 +44,8 @@ Committed CSVs (small results that other notebooks read):
 | `msh_array_ldos_tn.csv` | `msh_tjunctions_tn.ipynb` | `tjunctions_compare.ipynb` |
 | `msh_gate_density_tdvp_{Z,X}.csv`, `msh_gate_dQ_tdvp_{Z,X}.csv` | `msh_tjunctions_tn.ipynb` (TDVP, section 6) | `tjunctions_compare.ipynb` |
 | `msh_tjunctions_tn_gates.csv`, `msh_tjunctions_tn_timing.csv` | `msh_tjunctions_tn.ipynb` (sections 8 and 9) | `tjunctions_compare.ipynb` |
+| `msh_substrate/tn_zero_modes.csv`, `msh_substrate/tn_candidate.csv` | `msh_substrate_tn.ipynb` (sections 7, 8) | `msh_substrate_scaling.ipynb` |
+| `msh_substrate/py_zero_modes.csv`, `py_mumps_estimates.csv`, `py_candidate.csv`, `py_mu_scan.csv` | `msh_substrate_python.ipynb` (sections 5, 6, 8) | `msh_substrate_scaling.ipynb` (all but the scan) |
 
 Also committed, so that the two compare notebooks run from a fresh clone without rerunning anything:
 
@@ -73,7 +79,7 @@ Other caches and large outputs (`*.jls`, other `*.npz`, `*.npy`, `*.h5`, the fig
    The second line installs a Jupyter kernel that uses this project when a notebook is opened here. Select it in Jupyter
    (the notebooks' saved kernel name, `julia-1.13`, is only that of the machine they were run on).
 2. **Python notebooks.** `environment.yml` (conda-forge) pins the versions used: Python 3.13, NumPy 2.3.5, SciPy 1.16.3,
-   Matplotlib 3.10.6, kwant 1.5.0, numba, ipywidgets, tqdm and JupyterLab.
+   Matplotlib 3.10.6, kwant 1.5.0, python-mumps 0.0.4 (MUMPS 5.8, for `msh_substrate/`), numba, ipywidgets, tqdm and JupyterLab.
    ```bash
    conda env create -f environment.yml
    conda activate msh-tn
@@ -85,6 +91,10 @@ Other caches and large outputs (`*.jls`, other `*.npz`, `*.npy`, `*.h5`, the fig
    2.5 hours with six threads (start Jupyter with `JULIA_NUM_THREADS=6`; follow `tdvp_status.txt`); later runs load the cached results
    and take about 10 minutes (DMRG). Then run `tjunctions_python_ed.ipynb` (about 35 minutes) in the same directory, and finally
    `tjunctions_compare.ipynb`. The compare notebook alone runs immediately on the committed CSV and `.npz` files.
+5. **Substrate scaling** (`msh_substrate/`). `msh_substrate_scaling.ipynb` runs immediately on the committed CSVs. To regenerate them,
+   run `msh_substrate_tn.ipynb` first (it writes the check matrices in `msh_substrate/data/` that the Python notebook reads; about 3 hours,
+   mostly the second parameter point), then `msh_substrate_python.ipynb` (about 20 minutes plus the large sparse runs; the MUMPS run at
+   1024 × 1024 needs about 30 GB). Both resume from their CSVs when interrupted.
 
 ## Conventions
 

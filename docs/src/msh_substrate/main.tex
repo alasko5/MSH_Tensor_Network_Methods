@@ -1,0 +1,856 @@
+\documentclass[11pt]{article}
+\input{../preamble.tex}
+\usepackage{mathtools}
+\sloppy\emergencystretch=3em
+\usepackage{needspace}
+\renewenvironment{function}[1]{\par\Needspace{7\baselineskip}\medskip\noindent{\raggedright\textbf{\large\texttt{\hyphenchar\font=-1 #1}}\par}\nopagebreak}{\par\medskip}
+% allow line breaks after underscores in \code{}
+\renewcommand{\code}[1]{\texttt{\hyphenchar\font=-1 #1}}
+\hypersetup{pdftitle={MSH chain on a 2D substrate: function reference}}
+\newcommand{\ket}[1]{|#1\rangle}
+\newcommand{\bra}[1]{\langle#1|}
+\newcommand{\TODO}[1]{\textbf{[TODO: #1]}}
+
+\begin{document}
+
+\begin{center}
+{\LARGE\bfseries MSH chain on a 2D substrate}\\[0.5em]
+{\Large Function reference}\\[1.2em]
+\resizebox{\linewidth}{!}{\begin{tabular}{ll}
+\code{msh\_substrate\_tn.ipynb} & Julia, TensorBinding.jl / ITensors: quantics MPO, penalized DMRG\\
+\code{msh\_substrate\_python.ipynb} & Python, SciPy / MUMPS: sparse matrix, dense and shift-invert reference\\
+\code{msh\_substrate\_scaling.ipynb} & Python: cost of the methods against system size (plots)\\
+\end{tabular}}\\[1.2em]
+Repository \code{MSH\_Tensor\_Network\_Methods}, branch \code{msh-substrate}\\[0.3em]
+30 October 2026
+\end{center}
+
+\vspace{1em}
+\noindent This document explains every function and struct defined in the three notebooks (folder \code{msh\_substrate/}): what it
+computes, the method, its inputs and outputs, the numerical settings that matter, and where it is used. Numbers stated in the
+markdown of the notebooks are quoted as such; numbers from the outputs are those of the executed notebooks in the repository. Function names in
+\code{typewriter} are those of the code.
+
+\tableofcontents
+\clearpage
+
+%======================================================================
+\section{Overview}
+%======================================================================
+
+The three notebooks measure how the cost of computing the Majorana zero modes of an MSH chain grows when the chain sits on a 2D
+superconducting substrate that is made larger and larger, and compare a tensor-network method with dense and sparse-direct methods.
+The model is a $2^{L_x}\times2^{L_y}$ square lattice with hopping, Rashba coupling and s-wave pairing on every site, and a centred magnetic
+chain of $\ell$ sites in the middle row (section~\ref{sec:model}). Two quantities are computed at every size: the splitting $E_f$ of the
+zero-mode pair and its charge difference $\Delta Q = \bra{\psi_f}\tau_z\ket{\psi_f}$.
+
+\begin{itemize}
+\item \code{msh\_substrate\_tn.ipynb} (Julia) builds the BdG Hamiltonian as a quantics MPO on $2+L_y+L_x$ qubits, finds the near-zero subspace
+  by penalized DMRG on $K = H^2+\eta^2$, localizes the two Majoranas with the position operator and pairs them into $\psi_f$.
+\item \code{msh\_substrate\_python.ipynb} (Python) builds the same Hamiltonian as a sparse matrix and solves it by dense \code{eigh} and by
+  shift-invert Lanczos with SuperLU or MUMPS; it also checks the Hamiltonian against the MPO, the convergence in the substrate size, the
+  charge-difference formula, and scans the parameters for a point where the zero modes leak into the substrate.
+\item \code{msh\_substrate\_scaling.ipynb} (Python) reads the CSV files of the other two and compares time, memory, accuracy and bond
+  dimensions, and finds the crossover between the methods.
+\end{itemize}
+Two parameter points are used: the benchmark point $\mu = -7$, $\Delta = 2.4$, $J = 5.8$, $\ell = 12$, where the substrate is a gapped
+trivial superconductor and the zero modes stay on the chain row, and the leaking point $\Delta = 0.6$, $\mu = -3$, $J = 3$, $\ell = 64$
+(gap 0.090), where they spread over several rows.
+
+\paragraph{Main results.}
+\begin{itemize}
+\item \emph{Benchmark point.} The bond dimensions do not grow with the system size: $\chi(H) = 7$, $\chi(K)\le38$, $\chi(\psi)\le26$ from one row
+  to $2048\times2048$ sites. The TN time grows as $N^{0.14}$ (126 s at $1024^2$, 140 s at $2048^2$, 1.8 GB process memory), against
+  $N^{1.5}$ for SuperLU and MUMPS (MUMPS: 70 s at $512^2$, 1013 s and 28.6 GB at $1024^2$; SuperLU runs out of memory there) and $N^{3.07}$ for
+  dense diagonalization. The measured crossover is at about $589^2$ sites. The MUMPS times at this point are inflated by subnormal
+  floating-point arithmetic (with flush-to-zero the $1024^2$ factorization takes 107 s instead of 771 s); corrected, the crossover is
+  at roughly $700^2$. TN errors: $\le2.5\times10^{-8}$ in $\Delta Q$ and $\le1.1\times10^{-11}$ in $E_f$.
+\item \emph{Leaking point.} The bond dimensions are larger but still flat in the size ($\chi_\psi = 114$--137, $\chi_K = 31$--37), and the TN
+  time is 1.3--3.0 thousand seconds from $256^2$ to $2048^2$. MUMPS is faster at every size up to $1024^2$ (295 s) and about equal at
+  $2048^2$ (estimate 2326 s against 2556 s), where it needs $\sim$121 GB against 2.3 GB for the TN. TN errors $\le2.6\times10^{-12}$ in $E_f$ and
+  $\le9\times10^{-10}$ in $\Delta Q$.
+\item \emph{DMRG details that matter.} $K$ must be built with \code{cutoff\_K = 1e-20} for $\Delta Q$ at the $10^{-9}$ level; the second DMRG state
+  is started from the mirror image of the first, which fixes a convergence failure at $2048^2$; and which basis of the zero-mode pair DMRG
+  returns (Majoranas, $\chi\approx114$, or two-ended mixtures, $\chi\approx136$) varies with the random start, so the time of a size is uncertain
+  by up to a factor 1.7.
+\end{itemize}
+
+\subsection{Model and conventions}\label{sec:model}
+
+\paragraph{Lattice.} A square substrate of $N_x\times N_y = 2^{L_x}\times2^{L_y}$ sites with open boundaries in both directions;
+$N = N_xN_y$ sites and BdG dimension $D = 4N$. Sites are labelled by the 0-indexed column $i_x$ and row $i_y$. The magnetic chain
+is the centred segment of $\ell$ sites in the middle row,
+\[
+i_{y0} = \lfloor N_y/2\rfloor,\qquad i_x = x_0,\dots,x_0+\ell-1,\quad x_0 = \lfloor (N_x-\ell)/2\rfloor
+\]
+(\code{chain\_row}, \code{chain\_x} in Julia; \code{chain\_sites} in Python). With $L_y = 0$ there is a single row and the system is the
+MSH chain of \code{msh\_chain\_tn.ipynb} with a centred topological segment.
+
+\paragraph{Hamiltonian.} The particle block is
+\begin{gather*}
+H_0 = \sum_{\mathbf r} c^\dagger_{\mathbf r}(-\mu)c_{\mathbf r}
+ + \sum_{\mathbf r}\bigl[c^\dagger_{\mathbf r+\hat x}h_x c_{\mathbf r} + c^\dagger_{\mathbf r+\hat y}h_y c_{\mathbf r} + \text{h.c.}\bigr]
+ + J\sum_{\mathbf r\in\text{chain}} c^\dagger_{\mathbf r}\,\mathbf S(\mathbf r)\cdot\boldsymbol\sigma\,c_{\mathbf r},\\
+h_x = -t + i\alpha\sigma_y,\qquad h_y = -t - i\alpha\sigma_x ,
+\end{gather*}
+with $s$-wave singlet pairing $\Delta\,i\sigma_y$ on every site; in the Julia Nambu basis
+\[
+H_{\rm BdG} = \begin{pmatrix} H_0 & \Delta\,i\sigma_y\\ (\Delta\,i\sigma_y)^\dagger & -H_0^*\end{pmatrix}.
+\]
+Two spin textures are used: \code{S\_z}, all moments along $\hat z$ (topological; every benchmark), and \code{S\_tilt},
+$\mathbf S(i_x) = (\sin 0.3i_x\cos0.7,\ \sin0.3i_x\sin0.7,\ \cos0.3i_x)$, a generic texture with all three components, used only to check
+the Hamiltonian. The texture depends on $i_x$ only, since the chain lies in one row.
+
+\paragraph{Parameter points.}
+\begin{center}
+\resizebox{\linewidth}{!}{\begin{tabular}{lllll}
+\toprule
+Symbol & Benchmark point & Second point & Code name (Julia / Python) & Meaning\\
+\midrule
+$t$ & 1 & 1 & \code{t} / \code{t} & nearest-neighbour hopping\\
+$\mu$ & $-7$ & $-3$ & \code{μ} / \code{mu} & chemical potential\\
+$\alpha$ & 0.9 & 0.9 & \code{α} / \code{alpha} & Rashba spin--orbit coupling\\
+$\Delta$ & 2.4 & 0.6 & \code{Δ} / \code{Delta} & $s$-wave pairing\\
+$J$ & 5.8 & 3 & \code{J} / \code{J} & exchange coupling to the moments\\
+$\ell$ & 12 & 64 & \code{ℓ} / \code{ell} & chain length (zero-mode runs)\\
+\midrule
+used in & TN 7, Py 5--7 & TN 8, Py 8 & & \\
+\bottomrule
+\end{tabular}}
+\end{center}
+The size scans without eigensolver use $\ell = 48$ (width scan, and Python section 3) and $\ell = 3N_x/4$ (square scan).
+
+The markdown describes the two points as follows. At the benchmark point the bare band ($\pm4.74$ with the Rashba term) is empty,
+so the substrate is a gapped, trivial superconductor on which the chain stays topological; the zero modes barely enter it (gap
+$\approx0.55$, decay within one row; only $\sim2\times10^{-5}$ of the weight lies four or more rows away), which favours the tensor network.
+With $\ell = 12$ the pair splitting $E_f\approx4\times10^{-4}$ and the charge difference $|\Delta Q|\approx3\times10^{-3}$ are far above
+round-off, so they measure accuracy ($\ell = 48$ would give a splitting $\sim10^{-14}$). The second point, found by the
+$\mu\times J\times\Delta$ scan of Python section 8, is inside the band, topological and gapped (gap $0.0902$), and its zero mode spreads over
+several rows: 0.32 of its weight on the chain row, 0.13 four or more rows away, decaying as $e^{-|\Delta y|/2}$. The splitting decays
+along the chain with a length of about 7 sites; $\ell = 64$ gives $E_f/E_{\rm gap} = 10^{-4}$, comparable with the benchmark point. The
+converged exact values quoted there are $E_f = 9.04771\times10^{-6}$ and $\Delta Q = 4.58344\times10^{-4}$.
+
+\paragraph{Quantities.} Every zero-mode run returns three numbers: the pair energy $E_f>0$ of the fermion
+$\psi_f = (\gamma_1+i\gamma_2)/\sqrt2$ built from the two Majoranas, the charge difference
+\[
+\Delta Q = \bra{\psi_f}\tau_z\ket{\psi_f} = \sum_{\mathbf r,\sigma}\bigl(|u_\sigma(\mathbf r)|^2 - |v_\sigma(\mathbf r)|^2\bigr),
+\]
+which equals the charge difference of the two logical states (Python section 7), and the gap $E_{\rm gap}$, the next level above the pair.
+
+\subsection{Quantics encoding (Julia)}
+
+A single-particle BdG vector is an MPS, and $H$ an MPO, on $L_x+L_y+2 = \log_2N+2$ sites of dimension 2:
+\[
+[\,\text{nambu};\ \text{spin};\ y_1,\dots,y_{L_y};\ x_1,\dots,x_{L_x}\,],
+\]
+most significant bit first. The column and row are $i_x = \sum_{k=1}^{L_x} b^x_k2^{L_x-k}$ and $i_y = \sum_{k=1}^{L_y} b^y_k2^{L_y-k}$, so the
+position register (y bits, then x bits) read as one binary number is
+\[
+n = i_x + i_yN_x,
+\]
+TensorBinding's 2D row-major convention. A shift by one site in $x$ is therefore $\ket n\to\ket{n+1}$ and a shift by one row is
+$\ket n\to\ket{n+N_x}$, both binary adders on the whole register. In the dense form of the MPO (\code{dense}, big-endian over the
+sites) the index is $n_b\cdot2N + \sigma N + n$ with $n_b,\sigma\in\{0,1\}$. The x qubits are the sites
+$3+L_y,\dots,2+L_y+L_x$ (\code{xqubits}).
+
+\subsection{Nambu bases of the two codes}
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+ & Julia (TensorBinding) & Python (kwant convention)\\
+\midrule
+Spinor per site & $(c_\uparrow, c_\downarrow, c^\dagger_\uparrow, c^\dagger_\downarrow)$ & $(c_\uparrow, c_\downarrow, c^\dagger_\downarrow, -c^\dagger_\uparrow)$\\
+Matrix index & $n_b\cdot2N + \sigma N + n$ & $4n + c$\\
+On-site term & $-\mu + J\mathbf S\cdot\boldsymbol\sigma$; pairing $\Delta\,i\sigma_y$ & $-\mu\tau_z + \Delta\tau_x + J\,\tau_0\mathbf S\cdot\boldsymbol\sigma$\\
+Hopping $H_{\mathbf r+\hat d,\mathbf r}$ ($\hat x$, $\hat y$) & $-t + i\alpha\sigma_y$,\ $-t - i\alpha\sigma_x$ & $-t\tau_z + i\alpha\tau_z\sigma_y$,\ $-t\tau_z - i\alpha\tau_z\sigma_x$\\
+Particle--hole operator & $C = \tau_xK$ (\code{Cconj}) & $C = \tau_y\sigma_yK$\\
+Charge operator & $\tau_z$ on the Nambu site (\code{τz\_on}) & $+1$ on $c = 0,1$, $-1$ on $c = 2,3$\\
+\bottomrule
+\end{tabular}
+\end{center}
+Per site, the Python components $(a,b,c,d)$ are $(u_\uparrow, u_\downarrow, v_\downarrow, -v_\uparrow)$ in terms of the Julia components
+$(u_\uparrow,u_\downarrow,v_\uparrow,v_\downarrow)$. The signed permutation \code{julia\_to\_python} (Python section 2) implements this map; $\tau_z$
+and therefore $\Delta Q$ are the same in both bases.
+
+\subsection{Workflow and data files}
+
+Run order (all paths relative to \code{msh\_substrate/}):
+\begin{center}\code{msh\_substrate\_tn.ipynb} $\to$ \code{msh\_substrate\_python.ipynb} $\to$ \code{msh\_substrate\_scaling.ipynb}.\end{center}
+Python section 2 needs \code{data/tn\_check\_H.npz} from the TN notebook; Python section 8c needs \code{py\_mumps\_estimates.csv} from
+Python section 6; the scaling notebook only loads files. All timings are single-threaded (\code{BLAS.set\_num\_threads(1)} in Julia;
+\code{OMP\_NUM\_THREADS}, \code{MKL\_NUM\_THREADS}, \code{OPENBLAS\_NUM\_THREADS} set to 1 before NumPy is imported), except the parameter scan of
+Python section 8a, which uses 8 processes. The markdown gives about 2.5 hours for TN section 8; from the recorded times, TN section 7 takes about 12 minutes and section 8 about 2.5 hours (8924 s); Python section 5 takes at least 40 minutes (dense $64\times64$: 886 s, MUMPS $1024^2$: 1013 s) and section 8 several minutes (scan 198 s, MUMPS $1024^2$: 295 s); the scaling notebook runs in seconds.
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{>{\raggedright}p{4.6cm}>{\raggedright}p{3.6cm}>{\raggedright\arraybackslash}X}
+\toprule
+File & Written by & Content\\
+\midrule
+\code{data/tn\_check\_H.npz} & TN sec.~4 & ten dense MPO matrices, keys \code{H\_Lx\_Ly\_ℓ\_\{z,tilt\}} (not committed)\\
+\code{data/zm\_progress.log} & TN sec.~7 & one line per finished size of the benchmark\\
+\code{tn\_zero\_modes.csv} & TN sec.~7 & TN benchmark, 22 columns (committed)\\
+\code{tn\_candidate.csv} & TN sec.~8 & TN at the second point, 24 columns (committed, resumable)\\
+\code{py\_zero\_modes.csv} & Py sec.~5 & dense / SuperLU / MUMPS benchmark (resumable)\\
+\code{py\_mumps\_estimates.csv} & Py sec.~6 & MUMPS analysis estimates, $L = 7\dots11$\\
+\code{py\_mu\_scan.csv} & Py sec.~8a & 1305 points of the $\mu\times J\times\Delta$ scan\\
+\code{py\_candidate.csv} & Py sec.~8c & MUMPS at the second point (resumable)\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\paragraph{Mapping between the codes.}
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{>{\raggedright}p{3.2cm}>{\raggedright}p{5.4cm}>{\raggedright\arraybackslash}X}
+\toprule
+Quantity & Julia (\code{msh\_substrate\_tn}) & Python (\code{msh\_substrate\_python})\\
+\midrule
+Geometry & \code{Substrate}, \code{Nx}, \code{Ny}, \code{chain\_row}, \code{chain\_x} & \code{chain\_sites}\\
+Texture & \code{S\_z}, \code{S\_tilt} & \code{S\_z}, \code{S\_tilt}\\
+$H$ & \code{msh\_substrate} (MPO) & \code{ham} (CSR)\\
+Check of $H$ & section 4 (export) & \code{julia\_to\_python}, section 2\\
+Size of $H$ & \code{mpo\_size}, section 5 & \code{size\_info}, section 4\\
+Zero modes & \code{zero\_mode\_subspace}, \code{fermion\_from\_subspace} & \code{solve}, \code{pair\_values}\\
+$\Delta Q$ & \code{ΔQ\_mode} & \code{pair\_values}; \code{mask\_check} (section 7)\\
+Benchmark & \code{zm\_run} (section 7) & \code{solve} in \code{in\_fresh\_process} (section 5)\\
+Second point & \code{cand\_run} (section 8) & \code{solve\_candidate} (section 8c)\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\clearpage
+%======================================================================
+\section{Part I --- Tensor-network notebook (\code{msh\_substrate\_tn.ipynb})}
+%======================================================================
+
+The Hamiltonian is a quantics MPO on $\log_2N+2$ sites; the zero modes come from penalized DMRG on $K = H^2+\eta^2$. Dense matrices
+appear only in section 4, to export check data for the Python notebook. Packages: \code{TensorBinding} (alias \code{TB}), \code{ITensors},
+\code{ITensorMPS}, \code{LinearAlgebra}, \code{Printf}, \code{NPZ}, \code{Random}, \code{Logging}, \code{DelimitedFiles}.
+
+\subsection{Section 1: setup and helpers}
+
+Global settings: \code{BLAS.set\_num\_threads(1)} (single thread, as in the Python notebook, so that timings compare like with like);
+the Pauli matrices \code{σ0, σx, σy, σz} (\code{ComplexF64}); \code{DATA\_DIR = "data"}, created if missing, for the check data.
+
+\begin{function}{diag\_mpo(ψ, pos)}
+\begin{Verbatim}
+δ = ITensor(ComplexF64, s, s', dag(s''))
+for j in 1:2; δ[s => j, s' => j, s'' => j] = 1; end
+W[k] = replaceprime(ψ[k] * δ, 2 => 0; tags=tags(s))
+\end{Verbatim}
+Turns an MPS $\psi$ on the position qubits \code{pos} into the diagonal MPO $\mathrm{diag}(\psi) = \sum_n\psi_n\ket n\bra n$. Each site tensor
+is contracted with the copy tensor $\delta_{ss's''}$, which places the value $\psi[k]_{s=j}$ on the diagonal $(s', s) = (j, j)$; the
+\code{replaceprime} renames $s''$ back to $s$. The bond dimension of the MPO equals that of $\psi$, and the operation is exact. Used for
+the x-bond mask and the exchange in \code{msh\_substrate}, and by \code{diag\_mpo\_exact}.
+\end{function}
+
+\begin{function}{vector\_mps(v, q; cutoff=1e-14)}
+MPS of a vector $v$ of length $2^{|q|}$ on the qubits \code{q} (\code{q[1]} the most significant bit). The vector is reshaped into a
+$|q|$-index array, the indices reversed with \code{permutedims} (Julia's column-major reshape puts the least significant bit first), and
+compressed by TT-SVD (\code{MPS(A, q; cutoff)}) with truncation \code{cutoff = 1e-14}, i.e.\ exact up to round-off.
+\code{@disable\_warn\_order} suppresses ITensors' warning about tensors with many indices. Cost and memory are $O(2^{|q|})$, since the full
+array is built.
+\end{function}
+
+\begin{function}{diag\_mpo\_exact(v, pos; cutoff=1e-14)}
+\code{diag\_mpo(vector\_mps(v, pos; cutoff), pos)}: the exact diagonal MPO $\sum_nv_n\ket n\bra n$ of a full-length vector. Not used by the
+current Hamiltonian; an earlier version compressed length-$N$ vectors with it, which, according to the markdown of section 3, took 12--14 s
+of the build at $512\times512$ and $1024\times1024$ sites. It is kept as the reference construction.
+\end{function}
+
+\begin{function}{row\_profile\_mps(yvecs, w, ypos, xpos; cutoff=1e-14)}
+\begin{Verbatim}
+ψx = vector_mps(w, xpos; cutoff)
+isempty(ypos) && return ψx
+link = [Index(1, "Link,ly=$k") for k in eachindex(ypos)]
+...  t = ITensor(ComplexF64.(yvecs[k]), s) * onehot(link[k] => 1)
+ψx[1] *= onehot(link[end] => 1)
+return MPS(vcat(T, collect(ψx)))
+\end{Verbatim}
+The MPS of $(\mathbf y_1\otimes\dots\otimes\mathbf y_{L_y})\otimes w$ on $[\,y_1..y_{L_y};\ x_1..x_{L_x}\,]$: a product of two-component vectors
+$\mathbf y_k$ on the y qubits times a profile $w$ of length $N_x$ on the x qubits. Only $w$ is compressed (\code{vector\_mps}); each y qubit gets a
+single tensor joined to its neighbours by dimension-1 links, and the last link is attached to the first x tensor. The cost is
+$O(N_x)$ instead of $O(N)$. Two choices of \code{yvecs} are used: the bits of one row $i_y$ (each $\mathbf y_k = (1,0)$ or $(0,1)$), which gives a
+vector that is $w(i_x)$ on that row and zero elsewhere; and $\mathbf y_k = (1,1)$ for all $k$, which gives the same profile $w$ on every row.
+With $L_y = 0$ it returns $\psi_x$ unchanged. This is what makes the build of $H$ cost $O(N_x)$ (section 3).
+\end{function}
+
+\begin{function}{dense(mpo, sites), adjoint\_mpo(K)}
+\code{dense} contracts the whole MPO (\code{prod}) and reshapes it into a $D\times D$ matrix, big-endian over \code{sites} (first site most
+significant), giving the index $n_b\cdot2N+\sigma N+n$. Small systems only (section 4). \code{adjoint\_mpo(K) = swapprime(dag(K), 0, 1)} is
+the Hermitian conjugate of an MPO: complex conjugation of the tensors and exchange of bra and ket indices.
+\end{function}
+
+\subsection{Section 2: geometry}
+
+\begin{function}{struct Substrate; Nx, Ny, nsites, chain\_row, chain\_x}
+\begin{Verbatim}
+struct Substrate
+    Lx::Int; Ly::Int; ℓ::Int
+end
+chain_row(g::Substrate) = Ny(g) ÷ 2
+chain_x(g::Substrate) = ((Nx(g) - g.ℓ) ÷ 2):((Nx(g) - g.ℓ) ÷ 2 + g.ℓ - 1)
+\end{Verbatim}
+\code{Substrate(Lx, Ly, ℓ)} holds the geometry: $N_x = 2^{L_x}$ columns (\code{Nx}), $N_y = 2^{L_y}$ rows (\code{Ny}), $N$ sites (\code{nsites}) and
+a chain of $\ell$ sites. \code{chain\_row} is the chain row $\lfloor N_y/2\rfloor$ (0 for one row), \code{chain\_x} the 0-indexed range of chain
+columns. For even $\ell$ (all zero-mode runs) the chain is exactly centred, $x\to N_x-1-x$ maps it onto itself; for odd $\ell$ (one check case)
+it is off by half a site.
+\end{function}
+
+\begin{function}{S\_z(ix), S\_tilt(ix)}
+Spin textures as functions of the column: \code{S\_z} returns $(0,0,1)$; \code{S\_tilt} returns
+$(\sin0.3i_x\cos0.7,\ \sin0.3i_x\sin0.7,\ \cos0.3i_x)$, so that all three exchange components are nonzero and vary along the chain. Identical
+lambdas exist in the Python notebook.
+\end{function}
+
+\subsection{Section 3: Hamiltonian MPO}
+
+\begin{function}{msh\_substrate(g, S; t=1.0, μ=-7.0, α=0.9, Δ=2.4, J=5.8, cutoff=1e-13, sites=nothing)}
+Returns \code{(HB, [ns; ss; pos])}: the BdG MPO of the chain with texture \code{S(ix)} on substrate \code{g}, and its site list. \code{ns} and
+\code{ss} are TensorBinding's Nambu and spin indices (\code{TB.nambu\_index()}, \code{TB.spin\_index()}), \code{pos} the $L_x+L_y$ qubits
+(\code{siteinds("Qubit", ...)}), split into \code{ypos} (first $L_y$) and \code{xpos}. If \code{sites} is given its indices are reused.
+\code{P(op, M) = TB.prepend\_spin(M, ss, op)} puts a $2\times2$ spin matrix in front of a position MPO.
+
+\emph{Hopping.} The x bonds and the y bonds are built from TensorBinding's binary-adder MPO \code{TB.shift\_pair\_mpos(pos, q; cyclic=false)},
+whose first element maps $\ket n\to\ket{n+q}$ on the whole register (bond dimension 2: the carry). With \code{cyclic=false} a carry out of the
+most significant bit is dropped, so states with $n+q\ge N$ are mapped to zero.
+\begin{itemize}
+\item \textbf{x bonds:} $K_x = K_1\cdot\mathrm{mask}$, with $K_1 = $ shift by 1 and
+  \[
+  \mathrm{mask} = \mathrm{diag}\bigl((1,1)^{\otimes L_y}\otimes m\bigr),\qquad m(i_x) = \begin{cases}0 & i_x = N_x-1\\ 1 & \text{otherwise.}\end{cases}
+  \]
+  Without the mask the shift would join the last column of row $i_y$ to the first column of row $i_y+1$. The mask is built by
+  \code{row\_profile\_mps(every\_row, m, ypos, xpos)} and \code{diag\_mpo}, the product by \code{apply(K1, mask; cutoff)} (the mask acts first).
+  Spin matrix $h_x = -t\sigma_0 + i\alpha\sigma_y$.
+\item \textbf{y bonds:} $K_y = $ shift by $N_x$ (\code{shift\_pair\_mpos(pos, nx)}), which adds 1 to $i_y$ and maps the top row to zero (open
+  boundary); $h_y = -t\sigma_0 - i\alpha\sigma_x$. Only added when $L_y>0$: with one row, $N_x = 2^{L}$ has no bit inside the register, the adder
+  keeps only the low bits of $q$ and would act as the identity.
+\end{itemize}
+For each bond the terms $h\otimes K$ and $h^\dagger\otimes K^\dagger$ (\code{P(Matrix(hop'), adjoint\_mpo(K))}) are added, i.e.\
+$c^\dagger_{\mathbf r+\hat d}hc_{\mathbf r}$ and its Hermitian conjugate.
+
+\emph{Exchange.} For each spin component $k$ the vector $w(i_x) = JS_k(i_x)$ on the chain columns (zero elsewhere) becomes
+\code{diag\_mpo(row\_profile\_mps(row(iy0), w, ypos, xpos), pos)}: nonzero on the chain row only, where \code{row(iy)} lists the bits of $i_y$
+as unit vectors, most significant first. The term $\sigma_k\otimes(\cdot)$ is added only when $\max|w|>10^{-14}$, so \code{S\_z} gives a single
+exchange term.
+
+\emph{Assembly.} $H_0 = -\mu\,\sigma_0\otimes\mathbb 1 + \sum_{\rm bonds} + \sum_k$ exchange, summed with \code{+(terms...; cutoff)} at
+\code{cutoff = 1e-13}. The pairing MPO is \code{Hp = P(:iSy, Δ * Id)} $=\Delta\,i\sigma_y\otimes\mathbb1$. The BdG MPO is
+\[
+H_B = \tau_{pp}\otimes H_0 + \tau_{hh}\otimes(-H_0^*) + \tau_+\otimes H_p + \tau_-\otimes H_p^\dagger,
+\]
+with \code{TB.prepend\_nambu} and the operators \code{:Pp}, \code{:Ph}, \code{:tp} $=\ket p\bra h$, \code{:tm} $=\ket h\bra p$; $-H_0^*$ is
+\code{-1.0 * dag(H0)} (\code{dag} conjugates the elements) and $H_p^\dagger$ is \code{adjoint\_mpo(Hp)}. Again summed at \code{cutoff = 1e-13}.
+
+\emph{Cost.} Every diagonal is a product state on the y qubits times a compressed vector of length $N_x$, and the shifts are exact
+bond-dimension-2 MPOs, so the build costs $O(N_x)$ (markdown: milliseconds at every size). The resulting $\chi(H)$ is
+$\chi(H) = 7$ for spins along $\hat z$ at every size, from one row to $2048\times2048$ sites, and 8--9 for the tilted texture of the check cases; it does not depend on $L_y$.
+
+\emph{Used in:} section 4 (both textures), section 5 (build scan), \code{zm\_run} and \code{cand\_run} (with \code{PC...} for the second point).
+\end{function}
+
+\subsection{Section 4: check data for the Python notebook}
+
+For the five geometries \code{check\_cases} $=(L_x,L_y,\ell) = (3,0,6), (3,1,6), (3,2,5), (2,3,3), (4,2,10)$ (one row; two to eight rows; a
+substrate taller than wide) and both textures (\code{"z"}, \code{"tilt"}), the cell builds \code{msh\_substrate}, converts it with \code{dense}, and
+stores the matrix under the key \code{H\_\$(Lx)\_\$(Ly)\_\$(ℓ)\_\$name} in a dictionary written by \code{npzwrite} to
+\code{data/tn\_check\_H.npz}. Dimensions $D = 32$ to 256. For each case it prints $D$, $\chi(H)$ and the Hermiticity error
+$\lVert H-H^\dagger\rVert$ ($\chi(H) = 7$ for \code{S\_z}, 8--9 for \code{S\_tilt}; $\lVert H-H^\dagger\rVert = 1.4\times10^{-13}$ to $9.0\times10^{-13}$). The comparison itself is done in
+Python section 2.
+
+\subsection{Section 5: MPO size and build time against system size}
+
+\begin{function}{mpo\_size(H)}
+\code{sum(length(storage(T)) for T in H)}: the number of stored elements of the MPO tensors, the memory measure compared with the number of
+nonzeros of the sparse matrix (Python section 4). Also used for $K$ in \code{zm\_run} and \code{cand\_run}.
+\end{function}
+
+\paragraph{Build scan.} \code{scan} is the width scan $(6, L_y, 48)$, $L_y = 0\dots6$, followed by the square scan $(L, L, 3\cdot2^L/4)$,
+$L = 4\dots11$ (up to $2048\times2048$ sites). For each size the cell builds $H$ once as a warm-up (so compilation is not timed) and then times
+a second build with \code{@elapsed}; it collects $(L_x, L_y, \ell, N, \chi, \text{mem}, t_{\rm build})$ in \code{build} (not written to a file)
+and prints $N$, $D$, $\chi(H)$, the MPO elements and the build time. At $2048\times2048$: $\chi(H) = 7$, 3116 MPO elements, build 0.04 s; all builds take 0.01--0.04 s, and the number of elements grows linearly in the number of qubits (612 for one row of 64 sites).
+
+\subsection{Section 6: zero-mode pipeline}
+
+The pipeline of \code{msh\_chain\_tn.ipynb} (sections 8--9) adapted to the substrate: penalized DMRG for the near-zero subspace, $\hat X$
+localization and pairing, then $\Delta Q$.
+
+\begin{function}{quietly(f)}
+Runs the closure \code{f} with a logger that shows errors only. KrylovKit warns (``ignoring imaginary component'') at every DMRG step on
+these complex MPOs; the comment states that the imaginary parts are round-off. Wraps the DMRG calls of \code{zero\_mode\_subspace}.
+\end{function}
+
+\begin{function}{norm\_Hψ(H, ψ)}
+$\lVert H\psi\rVert$, from the exact product \code{apply(H, ψ; alg="naive", truncate=false)}, orthogonalized to site 1 so that the norm is the
+norm of the first tensor. For a normalized eigenvector this is $|E|$; for an approximate one it is an upper bound on the distance of the
+nearest eigenvalue from zero. Gives \code{E\_sub} and \code{E\_gap}.
+\end{function}
+
+\begin{function}{apply\_site(op, ψ, j), τz\_on(ψ), ΔQ\_mode(ψ)}
+\code{apply\_site} applies a single-site operator \code{op} (indices $s'$, $s$) to site $j$ of a copy of $\psi$; bonds are unchanged.
+\code{τz\_on} does the same with $\tau_z = \mathrm{diag}(1,-1)$ on the Nambu site (site 1). \code{ΔQ\_mode(ψ) = real(inner(ψ, τz\_on(ψ)))}
+$=\bra\psi\tau_z\ket\psi$, the charge difference of a normalized fermion mode.
+\end{function}
+
+\begin{function}{mps\_size(ψ), xqubits(g)}
+\code{mps\_size}: stored elements of the MPS tensors. \code{xqubits(g) = (3 + g.Ly):(2 + g.Ly + g.Lx)}: site numbers of the x qubits, most
+significant first (after Nambu, spin and the $L_y$ y qubits).
+\end{function}
+
+\begin{function}{Cconj(ψ)}
+Particle--hole conjugate $C\psi = \tau_xK\psi$ of an MPS: \code{dag(ψ)} conjugates all tensors, then $\tau_x$ swaps the particle and hole
+components on the Nambu site. The near-zero subspace is closed under $C$.
+\end{function}
+
+\begin{function}{mirror\_x(ψ, sites, xq)}
+The mirror image $x\to N_x-1-x$ of an MPS. In the quantics encoding $N_x-1-i_x$ is the bitwise complement of $i_x$, so the mirror is a NOT
+gate $\begin{psmallmatrix}0&1\\1&0\end{psmallmatrix}$ on every x qubit (site numbers \code{xq}); it is a product operator and leaves the bond
+dimensions unchanged. For a centred chain (even $\ell$) it maps one chain end onto the other. Rows and the Nambu and spin components are
+untouched.
+\end{function}
+
+\begin{function}{zero\_mode\_subspace(HB, sites; nzero=2, η=1e-2, seed=1234, nsweeps=20, ..., xq=nothing)}
+Penalized DMRG for \code{nzero} near-zero states and one more state as a gap check. Steps:
+\begin{enumerate}
+\item $K = H^2+\eta^2$, $\eta = 10^{-2}$, by \code{TB.build\_K(HB, sites, 0.0, η; cutoff\_K)}: $H\cdot H$ by \code{apply} with truncation
+  \code{cutoff\_K} and TensorBinding's default cap \code{maxdim\_K = 200}, plus $\eta^2\mathbb1$. Timed as \code{t\_K}.
+\item \code{Random.seed!(seed)}; for $k = 1,\dots,$\code{nzero}$+1$ a DMRG run on $K$ from \code{random\_mps(sites; linkdims=10)}. The first state is
+  the ground state of $K$, i.e.\ the eigenstate of $H$ closest to zero; later states use \code{dmrg(K, ψs, ψ0; weight)}, which adds the
+  penalty $w\sum_j\ket{\psi_j}\bra{\psi_j}$ ($w = $\code{weight}$=10$) for the states already found. All three runs are timed together as
+  \code{t\_dmrg}.
+\item Each state is normalized. The last one is the gap state $\psi_{\rm gap}$; the first \code{nzero} span the zero-mode subspace.
+\end{enumerate}
+DMRG settings: \code{nsweeps = 20}, \code{maxdim = [10, 20, 50, 100, 200]} (the last value repeats), \code{cutoff = 1e-14},
+\code{noise = [1e-6, 1e-7, 1e-8, 0.0]}, \code{eigsolve\_krylovdim = 20}, \code{eigsolve\_maxiter = 3}, \code{outputlevel = 0}.
+
+\emph{Truncation of $K$} (\code{cutoff\_K = 1e-20}). The markdown explains the choice: $\Delta Q$ is first order in any admixture of bulk
+states in the pair (energies only second order), so it is the most sensitive quantity. With \code{cutoff\_K = 1e-14} the one-row chain had
+$|\Delta Q_{\rm TN}-\Delta Q_{\rm exact}| = 1.3\times10^{-5}$, from a weight $4.7\times10^{-10}$ outside the exact pair that did not depend on
+sweeps or the DMRG cutoff; with \code{1e-20} the error was $1.3\times10^{-10}$. With a substrate the error was a few $\times10^{-9}$ for either value,
+limited by DMRG convergence. The tighter cutoff doubles $\chi(K)$ (18 to 38) and makes DMRG 1.2--1.6 times slower on the large substrates.
+The inverse-iteration refinement of \code{msh\_chain\_tn.ipynb} is not needed ($E_f\gg2\times10^{-6}$) and was not an alternative: with
+$E_f$ close to its shift $\sigma = 10^{-3}$ it made $L_y = 1$ worse ($5.7\times10^{-5}$).
+
+\emph{Start of the second state.} With a random start the second DMRG can end in a wrong state: the markdown reports that at the second
+parameter point and $2048\times2048$ sites it stopped at $\lVert H\psi_2\rVert = 0.60$ (a substrate band-edge state, bond dimension at the
+cap of 200), and the gap check then picked up the missing zero mode. The second state is therefore started from a state built from
+$\psi_1$, after removing its $\psi_1$ component (\code{orth(φ) = +(φ, -inner(ψs[1], φ) * ψs[1]; cutoff=1e-14)}), in this order:
+\begin{itemize}
+\item if \code{xq} is given, the mirror image \code{mirror\_x(ψ1, sites, xq)}, if its orthogonal part has norm $>0.1$. When $\psi_1$ is a
+  Majorana at one chain end this is the Majorana at the other end. Orthogonalized, it keeps norm 0.98--1.00;
+\item otherwise $C\psi_1$ (\code{Cconj}), if its orthogonal part has norm $>0.1$ (the subspace is closed under $C$). It is useless when
+  $\psi_1$ is a single Majorana: then $C\psi_1\propto\psi_1$ and the orthogonal part has norm $0.000$;
+\item otherwise the random MPS (\code{start2 = "random"}).
+\end{itemize}
+The random MPS of state 2 is drawn in any case, so the random stream of state 3 does not depend on the choice. Both norms are computed
+and returned whichever start is taken; \code{C\_perp} $\approx0$ means that $\psi_1$ came out a single Majorana.
+
+\emph{Which basis of the pair DMRG returns.} The near-zero subspace is two-dimensional, and DMRG can return any orthonormal basis of it:
+two localized Majoranas, or two-ended mixtures like $\psi_f$. For the exact modes at the second parameter point (TT-SVD with cutoff
+$10^{-14}$) a Majorana needs $\chi = 121$ and $\psi_f$ needs $139$, independent of the system size and of the position of the chain on the binary
+grid. Which basis comes out is set by the random start of $\psi_1$ and varies from size to size (section 8: $\chi\approx114$ where $\psi_1$ is
+a Majorana, $\approx136$ where it is a mixture), so the DMRG time of a size is uncertain by up to $(137/114)^3\approx1.7$. Starting $\psi_1$
+from a random MPS projected onto the left half of the substrate was tried and did not fix this at $512^2$ and above (markdown).
+
+\emph{Returns} the named tuple \code{(ψs, E\_sub, E\_gap, K, t\_K, t\_dmrg, start2)}: the \code{nzero} states, their $\lVert H\psi\rVert$, the gap
+estimate $E_{\rm gap} = \lVert H\psi_{\rm gap}\rVert$ (which should sit at the bulk gap), $K$, the two times, and
+\code{start2 = (kind, C\_perp, mirror\_perp)} with \code{kind} $\in\{$\code{"Cψ1"}, \code{"mirror"}, \code{"random"}$\}$ and the norms of the two
+orthogonalized candidates (\code{NaN} where not computed).
+\end{function}
+
+\begin{function}{fermion\_from\_subspace(HB, sites, ψs, g; cutoff=1e-14)}
+Builds the Majoranas and the fermion mode from the two subspace states.
+\begin{enumerate}
+\item Overlap matrix $S_{ab} = \langle\psi_a|\psi_b\rangle$ and the position matrix $X_{ab} = \langle\psi_a|\hat X|\psi_b\rangle$ with
+  $\hat X = \sum_k2^{L_x-k}\hat n_k$ on the x qubits only ($\hat n_k = \ket1\bra1$ on qubit $k$, applied by \code{apply\_site}); $\hat X$ is the
+  column $i_x$, independent of the row.
+\item The generalized Hermitian eigenproblem $X c = x\,S c$ (\code{eigen(Hermitian(X), Hermitian(S))}, both symmetrized) gives the Majorana
+  centres $x_1\le x_2$ (0-indexed columns) and the coefficients; \code{combine} forms $\gamma_i = c_1\psi_1+c_2\psi_2$ (sum at \code{cutoff}) and
+  normalizes it.
+\item Phase fix: if $C\gamma = e^{i\theta}\gamma$ then $e^{i\theta/2}\gamma$ is self-conjugate; $\theta = \arg\langle\gamma|C\gamma\rangle$.
+\item $\psi_f = (\gamma_1+i\gamma_2)/\sqrt2$, normalized; $E_f = \mathrm{Re}\,\bra{\psi_f}H\ket{\psi_f}$. If $E_f<0$, $\psi_f\to C\psi_f$ and
+  $E_f\to-E_f$, so $\psi_f$ is always the $+E$ member.
+\end{enumerate}
+Returns \code{(centers, γs, ψf, E\_f, C)}. The function computes its own x-qubit range and its own $C$ (the same as \code{xqubits} and
+\code{Cconj}).
+\end{function}
+
+\subsection{Section 7: zero-mode benchmark}
+
+\code{RUN\_ZM = true}; \code{zm\_file = "tn\_zero\_modes.csv"}; \code{zm\_cols}, the 22 column names. \code{zm\_scan} is the width scan $(6, L_y)$,
+$L_y = 0\dots6$, and the square scan $(L,L)$, $L = 4, 5, 7, \dots, 11$ ($L = 6$ is in the width scan), 14 sizes sorted by
+$(L_x+L_y, L_y)$, i.e.\ increasing $N$. All with $\ell = 12$ and \code{S\_z}.
+
+\begin{function}{zm\_run(Lx, Ly; ℓ=12)}
+One benchmark size: \code{msh\_substrate} (timed as \code{t\_H}), \code{zero\_mode\_subspace} with \code{xq = xqubits(g)},
+\code{fermion\_from\_subspace} (timed as \code{t\_pair}) and \code{ΔQ\_mode}. Returns the row
+\begin{center}\small
+\code{Lx, Ly, ell, N, D, t\_H, t\_K, t\_dmrg, t\_pair, t\_total, chi\_H, chi\_K, chi\_psi, mem\_K\_MB, mem\_psi\_MB, rss\_MB, E\_f, dQ, E\_gap, x1, x2, start2}
+\end{center}
+with \code{t\_total} the sum of the four times; $\chi$ the largest bond dimensions (\code{maxlinkdim}; for $\psi$ the largest of the two
+subspace states); memories as stored elements $\times16$ bytes in MB ($10^6$ bytes), for $K$ and the sum over the two subspace states;
+\code{rss\_MB = Sys.maxrss()/1e6}, the peak resident memory of the whole Julia process so far (it includes the Julia runtime and compiled
+code, and, since $N$ increases along the scan, it is the peak up to and including this size); \code{start2} only the kind of start.
+\end{function}
+
+\paragraph{Driver and file logic.} If \code{RUN\_ZM = false} and the CSV exists, it is loaded with \code{readdlm(...; header=true)}. Otherwise
+\code{zm\_run(4, 0)} is run once as a warm-up (compilation), then the scan runs with one line per finished size appended to
+\code{data/zm\_progress.log} (flushed after each size); the CSV is written only at the end, header plus \code{writedlm} of all rows. This run is
+not resumable: an interrupted scan leaves only the log. The cell prints one line per size (times, $\chi_H$, $\chi_K$, $\chi_\psi$, $K+\psi$ memory,
+RSS, $E_f$, $\Delta Q$, gap, start of $\psi_2$).
+
+Results: $\chi(K) = 31$--38 and $\chi(\psi) = 7$--26 over the whole scan, with no growth along the square scan; \code{t\_total} = 126 s and 140 s, RSS 1841 MB at both;
+$K$ + MPS 1.40 MB at $2048\times2048$; the mirror start at every size; at $2048\times2048$: $E_f = 3.712285\times10^{-4}$, $\Delta Q = -3.446600\times10^{-3}$, gap 0.5529, the converged values from $L = 6$ on.
+
+\subsection{Section 8: a substrate the zero modes leak into}
+
+\code{RUN\_CAND = true}; \code{cand\_file = "tn\_candidate.csv"}; \code{const PC = (μ = -3.0, Δ = 0.6, J = 3.0)} ($t$ and $\alpha$ keep their
+defaults); \code{cand\_scan} $= (7,6), (8,8), (9,9), (10,10), (11,11)$, i.e.\ $128\times64$ and $256^2$ to $2048^2$ sites; $\ell = 64$, \code{S\_z}.
+
+\begin{function}{cand\_run(Lx, Ly; ℓ=64)}
+As \code{zm\_run}, with \code{msh\_substrate(g, S\_z; PC...)}. Returns the 24 columns
+\begin{center}\small
+\code{Lx, Ly, ell, N, t\_H, t\_K, t\_dmrg, t\_pair, t\_total, chi\_K, chi\_psi, mem\_K\_MB, mem\_psi\_MB, rss\_MB, E\_f, dQ, E\_gap, E\_sub1, E\_sub2, x1, x2, start2, C\_perp, mirror\_perp}
+\end{center}
+i.e.\ in addition $\lVert H\psi_1\rVert$, $\lVert H\psi_2\rVert$ (the check that the second DMRG state is a zero mode) and the full
+\code{start2} tuple with the norms of the orthogonalized $C\psi_1$ and mirror image; without \code{D} and \code{chi\_H}. \code{rss\_MB} is the
+process peak so far, so it includes section 7.
+\end{function}
+
+\paragraph{Resume logic.} \code{done} is the set of $(L_x, L_y)$ already in the CSV. If \code{RUN\_CAND}, the header is written when
+\code{done} is empty, and each missing size is run and appended as one line as soon as it finishes (\code{open(..., "a")}), with a progress
+line \code{done Nx×Ny: t s}. An interrupted run therefore resumes at the next size. Finally the file is read and printed: substrate, $N$,
+total time, $\chi_K$, $\chi_\psi$, RSS, $E_f$, $\Delta Q$, gap, $\lVert H\psi_2\rVert$, $x_1\dots x_2$, and the start with its two norms. The markdown
+gives a run time of about 2.5 hours. Results (mirror start at every size; mirror\_perp $=1.000$; $\lVert H\psi_2\rVert = 9.06$--$9.08\times10^{-6}$, i.e.\ $E_f$):
+\begin{center}\small\begin{tabular}{lrrrc}
+substrate & total & $\chi_K$ & $\chi_\psi$ & \code{C\_perp}\\\hline
+$128\times64$ & 516 s & 31 & 115 & 0.002\\
+$256^2$ & 1340 s & 31 & 137 & 0.386\\
+$512^2$ & 1536 s & 35 & 114 & 0.000\\
+$1024^2$ & 2976 s & 34 & 135 & 0.317\\
+$2048^2$ & 2556 s & 37 & 114 & 0.000\\
+\end{tabular}\end{center}
+$\chi_\psi$ is 114--115 where $\psi_1$ came out a single Majorana (\code{C\_perp} $\approx0$) and 135--137 where it is a mixture; this is why $1024^2$ takes longer than $2048^2$. At $2048\times2048$: $E_f = 9.047709\times10^{-6}$, $\Delta Q = 4.583431\times10^{-4}$, against the exact $9.047709\times10^{-6}$ and $4.583435\times10^{-4}$.
+
+\clearpage
+%======================================================================
+\section{Part II --- Python notebook (\code{msh\_substrate\_python.ipynb})}
+%======================================================================
+
+The same model as a sparse CSR matrix (SciPy), with dense diagonalization where it fits and shift-invert Lanczos with a sparse direct
+solver beyond. Packages: NumPy, \code{scipy.linalg}, \code{scipy.sparse}, \code{scipy.sparse.linalg} (\code{eigsh}, \code{splu},
+\code{LinearOperator}), \code{mumps} (python-mumps, MUMPS 5.8 sequential, conda-forge), \code{multiprocessing}, \code{resource}, matplotlib.
+
+\subsection{Setup}
+
+The thread variables are set to 1 before NumPy is imported. \code{DATA\_DIR = "data"}. Pauli matrices \code{s0, sx, sy, sz} and the
+Kronecker products (first factor Nambu $\tau$, second spin $\sigma$) \code{tzs0} $=\tau_z\sigma_0$, \code{txs0}, \code{t0sx}, \code{t0sy},
+\code{t0sz}, \code{tzsx}, \code{tzsy}. \code{S\_z} and \code{S\_tilt} are the same textures as in Julia.
+
+\begin{function}{in\_fresh\_process(fn, *args)}
+\begin{Verbatim}
+ctx = mp.get_context("fork"); q = ctx.Queue()
+def target():
+    try:
+        out, status = fn(*args), "ok"
+    except BaseException as e:
+        out, status = None, f"{type(e).__name__}: {e}".replace(",", ";").strip()
+    q.put((out, resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, status))
+\end{Verbatim}
+Runs \code{fn(*args)} in a forked child process and returns \code{(result or None, peak RSS in MB, status)}. The peak is the child's
+\code{ru\_maxrss} (kB on Linux, divided by 1024). Fork is used so that \code{fn} may be a closure or lambda (nothing is pickled except the
+result). Every calculation that builds a large matrix runs this way, for two reasons: the kernel stays small, and every measurement starts
+from the same baseline (a forked child inherits the kernel's resident memory, about 110 MB per the markdown, which would otherwise grow
+from one calculation to the next). Errors in the child (including \code{MemoryError}) become the status string \code{"Type: message"}, with
+commas replaced by semicolons so it can go into a CSV. The parent polls the queue with a 5 s timeout and checks \code{p.is\_alive()}, so a
+child that dies without reporting (e.g.\ killed by the out-of-memory killer) gives \code{(None, nan, "process died (exit code ...)")}
+instead of hanging.
+\end{function}
+
+\subsection{Section 1: Hamiltonian}
+
+\begin{function}{shift(n)}
+$n\times n$ CSR matrix with ones on the first subdiagonal, $\ket i\to\ket{i+1}$, open boundary.
+\end{function}
+
+\begin{function}{chain\_sites(Lx, Ly, ell)}
+Returns the chain columns \code{np.arange(x0, x0 + ell)} with $x_0 = (N_x-\ell)/\!/2$, and the chain row $N_y/\!/2$; as \code{chain\_x},
+\code{chain\_row} in Julia.
+\end{function}
+
+\begin{function}{ham(Lx, Ly, ell, S=S\_z, t=1.0, mu=-7.0, alpha=0.9, Delta=2.4, J=5.8)}
+\begin{Verbatim}
+Tx = sp.kron(sp.kron(Iy, shift(Nx)), hx)
+Ty = sp.kron(sp.kron(shift(Ny), Ix), hy)
+H = sp.kron(sp.identity(N), -mu * tzs0 + Delta * txs0) + Tx + Tx.conj().T + Ty + Ty.conj().T
+\end{Verbatim}
+Sparse $4N\times4N$ BdG matrix (CSR) in the basis $4n+c$, $n = i_yN_x+i_x$. With this index a site operator is \code{kron(A\_y, B\_x)} and the
+full matrix \code{kron(site operator, 4×4 spinor matrix)}. On-site $-\mu\tau_z+\Delta\tau_x$; x bonds \code{kron(I\_y, shift\_x)}$\otimes h_x$,
+which are open within each row (no wrap to the next row, unlike the Julia register shift, so no mask is needed); y bonds
+\code{kron(shift\_y, I\_x)}$\otimes h_y$; $h_x = -t\tau_z+i\alpha\tau_z\sigma_y$, $h_y = -t\tau_z-i\alpha\tau_z\sigma_x$; both plus their conjugate
+transposes. The exchange adds \code{kron(diag(v), t0s\_k)} with $v_n = JS_k(i_x)$ on the chain sites, skipped when $\max|v|\le10^{-14}$.
+Used by every section.
+\end{function}
+
+\subsection{Section 2: check against the tensor-network Hamiltonian}
+
+\begin{function}{julia\_to\_python(Hj, N)}
+\begin{Verbatim}
+W[4*n + 0, 0*N + n] = 1            # c_up      <- (nb = 0, up)
+W[4*n + 1, 1*N + n] = 1            # c_dn      <- (nb = 0, dn)
+W[4*n + 2, 2*N + 1*N + n] = 1      # c_dag_dn  <- (nb = 1, dn)
+W[4*n + 3, 2*N + 0*N + n] = -1     # -c_dag_up <- (nb = 1, up)
+\end{Verbatim}
+Converts a dense Julia matrix (index $n_b\cdot2N+\sigma N+n$) to the Python basis: $W H_{\rm TN}W^T$ with the signed permutation $W$ (comments in
+the listing transliterated). The minus sign is the $-c^\dagger_\uparrow$ of kwant's spinor.
+\end{function}
+
+\paragraph{Check.} For every key of \code{data/tn\_check\_H.npz} the cell parses $L_x$, $L_y$, $\ell$ and the texture from the key, builds
+\code{ham(...)} with \code{S\_z} or \code{S\_tilt}, and prints $\max|WH_{\rm TN}W^T-H_{\rm py}|$ element by element; it then asserts that the
+largest difference is below $10^{-10}$. Printed: largest difference $9.8\times10^{-14}$.
+
+\subsection{Section 3: lowest levels against substrate width}
+
+$L_x = 6$, $\ell = 48$, \code{S\_z}, $L_y = 0\dots6$: \code{eigsh(H, k=6, sigma=0, which="LM", return\_eigenvectors=False)} (shift-invert
+with SciPy's default factorization). The sorted $|E|$ give the pair, \code{E[0]}, and the gap, \code{E[2]} (pairs of $\pm E$ appear twice). Run in
+the kernel (largest $D = 16\,384$). The purpose stated in the markdown: the substrate at $\mu = -7$ is gapped, so the gap converges after a
+few rows, and the converged values are a correctness check at sizes where dense diagonalization is no longer possible.
+The gap is 0.2563 for one row, 0.4283 and 0.5613 for 2 and 4 rows, and converged at 0.5491 from 8 rows ($L_y = 3$) on; the pair $|E|$ is $2.6\times10^{-11}$ for one row and $\sim10^{-14}$ with a substrate.
+
+\subsection{Section 4: sparse matrix size against system size}
+
+\begin{function}{size\_info(Lx, Ly, ell)}
+Builds \code{ham} and returns $(D, \text{nnz}, \text{CSR MB}, t_{\rm build})$, with the CSR memory \code{data + indices + indptr} bytes. Run in a
+forked process for each size of the width scan $(6, L_y, 48)$ and the square scan $(L, L, 3\cdot2^L/4)$, $L = 4\dots10$ (the TN scan goes to
+$L = 11$). At $1024\times1024$: $8.38\times10^7$ nonzeros, 1693 MB in CSR, built in 1.5 s.
+\end{function}
+
+\subsection{Section 5: zero-mode benchmark, dense and sparse}
+
+Settings: \code{RUN\_ZM = True}; \code{DENSE\_MAX\_D = 16384} (dense only up to $64\times64$ sites); \code{zm\_file = "py\_zero\_modes.csv"};
+\code{zm\_scan} as in Julia without $2048\times2048$ (13 sizes, increasing $N$); $\ell = 12$, \code{S\_z}.
+
+\begin{function}{pair\_values(E, V)}
+From a few eigenpairs around zero: the two smallest $|E|$ are the pair, and \code{ip} is the one with $E>0$. Returns
+$E_f = E_{ip}$, $\Delta Q = \sum_n(|v_{n0}|^2+|v_{n1}|^2) - (|v_{n2}|^2+|v_{n3}|^2) = \bra{\psi_f}\tau_z\ket{\psi_f}$ (eigenvectors are normalized), and
+the gap, the third smallest $|E|$.
+\end{function}
+
+\begin{function}{solve(Lx, Ly, method, ell=12)}
+Zero modes of one system by one method; returns (eigensolver time, $E_f$, $\Delta Q$, gap). The time includes the factorization but not the
+build of $H$.
+\begin{itemize}
+\item \code{"superlu"}: \code{splu(H.tocsc(), permc\_spec="MMD\_AT\_PLUS\_A")}, then
+  \code{eigsh(H, k=4, sigma=0, which="LM", OPinv=LinearOperator(..., matvec=lu.solve))}, i.e.\ Lanczos on $H^{-1}$. The ordering is the
+  minimum-degree ordering of $A^T+A$, suited to the structurally symmetric matrix; the markdown states that it halves the fill compared with
+  \code{eigsh}'s default (COLAMD) and makes the solve 2.3--2.5 times faster ($256^2$: 21 s to 9 s; $512^2$: 276 s to 110 s). SuperLU reports a failed
+  allocation by printing to stderr and raising an empty \code{MemoryError}; \code{solve} re-raises it as
+  \code{MemoryError("SuperLU: not enough memory to perform factorization")} so the status in the CSV is informative. At $1024\times1024$
+  this happens within a second with a few GB in use on a 188 GB machine (SuperLU's limits, not the machine's), and that size is recorded as
+  failed.
+\item \code{"mumps"}: \code{mumps.Context().factor(H.tocoo(), ordering="metis")} (analysis and numerical factorization with METIS nested
+  dissection), then the same \code{eigsh} with \code{ctx.solve}. Per the markdown, METIS gave the smallest factorization at $256^2$ (2.6 s, against
+  3.1 s for SCOTCH and 3.2 s for AMD), and MUMPS's 64-bit indices let it factorize $1024\times1024$.
+\item \code{"dense"}: \code{la.eigh(H.toarray(), subset\_by\_index=[2N-2, 2N+1])}, the four eigenpairs in the middle of the spectrum, about twice
+  as fast as the full spectrum; the $O(D^3)$ tridiagonal reduction dominates either way.
+\end{itemize}
+\end{function}
+
+\paragraph{Driver and resumable CSV.} Columns \code{Lx, Ly, ell, N, D, method, t, rss\_MB, E\_f, dQ, E\_gap, status}. \code{done} is the set of
+$(L_x, L_y, \text{method})$ already in the file. If \code{RUN\_ZM}: one warm-up \code{solve(4, 0, m)} per method in the kernel; the baseline
+peak of a forked process is printed (\code{in\_fresh\_process(lambda: None)}); the header is written if nothing is done; then for each size and
+method (dense only while $D\le$ \code{DENSE\_MAX\_D}) a missing row is computed with \code{in\_fresh\_process(solve, ...)} and appended at once. A
+failed or killed run is recorded with NaN values and its status. Finally the file is read, sorted by $(N, \text{method})$ and printed.
+\code{RUN\_ZM = False} only loads it; deleting the file starts over. MUMPS at $1024\times1024$: 1013 s and 28.6 GB (the slowdown of this point is explained in Part III, section 5); dense at $64\times64$: 886 s and 4.4 GB; SuperLU at $1024\times1024$: \code{MemoryError: SuperLU: not enough memory to perform factorization}.
+
+\subsection{Section 6: MUMPS estimates beyond the benchmark}
+
+\begin{function}{mumps\_estimate(L)}
+Builds \code{ham(L, L, 12)} (COO), runs only MUMPS's analysis step (\code{ctx.analyze(H, ordering="metis")}: ordering and symbolic
+factorization, no numerical work) and returns
+$(L, L, N, D$, \code{est\_nonzeros}, \code{est\_flops}, \code{est\_mem\_incore}, \code{est\_mem\_ooc}, $t_{\rm analysis})$ from
+\code{ctx.analysis\_stats}: the predicted number of entries in the factors, the floating-point operations of the factorization, and the
+in-core and out-of-core memory in MB.
+\end{function}
+\code{RUN\_EST = True} (or a missing file) runs it in a forked process for $L = 7\dots11$ and rewrites \code{py\_mumps\_estimates.csv}; then the
+table is printed. The markdown states that the in-core estimate is 7\,\% ($512^2$) and 2.5\,\% ($1024^2$) below the measured peak of section 5,
+so the $2048\times2048$ value (about 120 GB; roughly two hours at the speed measured at $1024^2$) is reliable. The estimates depend only on
+the sparsity pattern, which is the same at both parameter points with \code{S\_z}. At $2048\times2048$: $5.76\times10^9$ factor entries, $1.54\times10^{13}$ flops, 121184 MB in core, 14703 MB out of core.
+
+\subsection{Section 7: charge difference, mask method and single-mode formula}
+
+The CZ, QFT and period-finding notebooks and \code{msh\_chain\_python\_ed.ipynb} compute the charge difference from the many-body densities of
+the two logical states (the \emph{mask method}); this notebook and the TN code use the single vector $\psi_f$. The section shows that they are
+the same quantity.
+
+\paragraph{Mask method.} $M$ is the full $4N\times4N$ unitary of eigenvectors sorted by energy: column $2N$ is $\psi_f$ ($+E_f$), column $2N-1$ its
+partner $C\psi_f$ ($-E_f$), columns $0\dots2N-1$ the negative-energy states. Logical state $\ket0$ fills columns $0\dots2N-1$; $\ket1$ swaps column
+$2N-1$ for column $2N$. With $G_j = M_{:,\text{mask}_j}M_{:,\text{mask}_j}^\dagger$,
+\[
+\rho_j(\mathbf r) = \sum_\sigma(G_j)_{\mathbf r\sigma,\mathbf r\sigma},\qquad \delta n = \rho_1-\rho_0,\qquad \Delta Q = \sum_{\mathbf r}\delta n(\mathbf r).
+\]
+\paragraph{Reduction to one vector.} The two masks share every column but one, so
+\[
+G_1 - G_0 = \ket{\psi_f}\bra{\psi_f} - \ket{C\psi_f}\bra{C\psi_f}.
+\]
+The particle part of $C\psi_f$ is the complex conjugate of the hole part $v$ of $\psi_f$ up to a spin rotation ($C = \tau_y\sigma_yK$), so the
+particle diagonal is $\delta n(\mathbf r) = \sum_\sigma|u_\sigma(\mathbf r)|^2 - \sum_\sigma|v_\sigma(\mathbf r)|^2$ and
+$\Delta Q = \bra{\psi_f}\tau_z\ket{\psi_f}$. The bulk drops out of the difference; the identity is exact, also during a ramp (all columns evolve
+with the same unitary) and column by column for several modes. The mask method needs all of $M$ (dense \code{eigh}, $O(D^3)$ time, $O(D^2)$
+memory; per the markdown $64\times64$ sites take 4.3 GB and 886 s, and $1024\times1024$ would need about $2.8\times10^5$ GB); its extra output, the
+absolute densities $\rho_0,\rho_1$, is the bulk charge, which cancels in every compared quantity. Hence only the single-mode formula is used for the
+scaling study. Conventions that must match: $\psi_f$ is the $+E_f$ member (the partner gives $-\Delta Q$), and the density counts electrons,
+the components $(c_\uparrow, c_\downarrow)$.
+
+\begin{function}{mask\_check(Lx, Ly, ell=12)}
+\begin{Verbatim}
+masks = np.zeros((2, 4*N), bool)
+masks[1, 2*N] = True                                 # |1>: psi_f filled
+masks[:, :2*N] = np.flip(~masks[:, 2*N:], axis=1)    # column 2N-1-k = C(column 2N+k)
+\end{Verbatim}
+One full dense \code{la.eigh} (ascending energies, timed). The masks are built as in \code{msh\_chain\_python\_ed.ipynb}: the upper half
+says which positive-energy columns are filled, and the lower half is its flipped complement, because column $2N-1-k$ is the partner of column
+$2N+k$. For each mask $\rho_j$ is the particle diagonal of $G_j$, computed as the row sums of $|M_{:,\text{mask}}|^2$ over the particle
+components. The single-mode density uses column $2N$ alone. $C\psi_f$ is computed as \code{kron(sy, sy)} applied to the conjugated per-site
+spinors ($C = \tau_y\sigma_yK$) and compared with column $2N-1$. Returns a dict with $N$, $D$, $E_f$, the \code{eigh} time, the overlap
+$|\langle M_{:,2N-1}|C\psi_f\rangle|$, $\Delta Q$ from both methods, $\max|\delta n_{\rm mask}-\delta n_{\rm single}|$ and both densities as
+$N_y\times N_x$ arrays.
+\end{function}
+Run in forked processes for $64\times1$, $64\times4$, $16\times16$, $32\times32$ (\code{mask\_scan}); the cell prints one line per system and plots
+$\delta n(i_x,i_y)$ of the $32\times32$ system (mask method) and $|\delta n_{\rm mask}-\delta n_{\rm single}|$. Overlap $1.000000000000$ in all four cases, $|\Delta Q_{\rm mask}-\Delta Q_{\rm single}|\le2.1\times10^{-15}$, $\delta n$ differences $\le2.0\times10^{-12}$.
+
+\subsection{Section 8: a substrate the zero modes leak into}
+
+\subsubsection*{8a.\ \texorpdfstring{$\mu\times J$}{mu x J} scan for three values of \texorpdfstring{$\Delta$}{Delta}}
+
+Fixed geometry $64\times32$ ($L_x = 6$, $L_y = 5$), $\ell = 32$ in row 16. Module-level masks over the $(i_y, i_x)$ grid: \code{ends\_s}, within 3
+columns of either chain end (all rows); \code{mid\_s}, the middle third of the chain columns; \code{dy\_s} $=|i_y-i_{y0}|$.
+
+\begin{function}{scan\_point(args)}
+For \code{args = (Delta, mu, J)}: \code{eigsh(ham(...), k=6, sigma=0, which="LM")}, levels sorted by $|E|$. With $\rho$ the total weight
+(all four components) per site of the lowest state, returns
+$(\Delta, \mu, J, E_0, E_2, E_4$, \code{w\_ends}, \code{w\_mid}, \code{w\_row}, \code{rms\_dy}, \code{w\_far}$)$: the first three distinct levels
+$|E|$ (indices 0, 2, 4 of the $\pm$ pairs), the weight near the chain ends, in the middle third, on the chain row, the rms distance
+$\sqrt{\sum\rho\,\Delta y^2}$ from the chain row, and the weight four or more rows away.
+\end{function}
+Grid: $\Delta\in\{2.4, 1.2, 0.6\}$, $\mu = -7\dots0$ in steps of 0.25, $J = 1\dots8$ in steps of 0.5: $3\times29\times15 = 1305$ points,
+\code{Pool(8).map(..., chunksize=4)}, written to \code{py\_mu\_scan.csv} (\code{RUN\_MU = False} loads it). \textbf{Topological criterion:}
+$E_0/E_2<0.05$ (a pair well below the next level) and \code{w\_ends} $>0.5$ (the lowest state sits at the chain ends). Figure: top row
+$\log_{10}(E_0/E_2)$ per $\Delta$ with the topological region outlined in red; bottom row \code{rms\_dy} inside it; dashed line at the band
+bottom $\mu = -4.741$. Printed: the number of topological points per $\Delta$, the topological point with the largest $E_2$ below and inside
+the band, and four selected points, including $(0.6, -3, 3)$. 1305 points in 198 s; topological: 97 ($\Delta = 2.4$), 113 (1.2), 90 (0.6).
+
+\subsubsection*{8b.\ The point \texorpdfstring{$\Delta = 0.6$, $\mu = -3$, $J = 3$}{Delta = 0.6, mu = -3, J = 3}}
+
+\begin{function}{pair\_levels(Lx, Ly, ell)}
+\code{eigsh} (6 levels) at \code{PC = dict(mu=-3.0, Delta=0.6, J=3.0)}. Returns $|E_0|$, $|E_2|$, $\Delta Q$ of the $+E$ member of the pair, and
+the weight per site of that state as an $N_y\times N_x$ array.
+\end{function}
+Three checks, each size in a forked process: (1) splitting against chain length, $\ell = 16\dots128$ on $256\times32$, printing $E_0$, $E_2$,
+$E_0/E_2$, $\Delta Q$; (2) convergence with substrate height, $N_x = 256$, $\ell = 64$, $N_y = 8\dots128$; (3) the weight per row, averaged over
+$\pm\Delta y$, at $\Delta y = 0,1,2,4,\dots,48$ on $256\times128$. These produce the numbers quoted in the model description (decay length about 7
+sites, $\ell = 64$, $e^{-|\Delta y|/2}$ decay). $E_0/E_2 = 1.0\times10^{-4}$ at $\ell = 64$ ($256\times32$); $E_0$, gap and $\Delta Q$ converge from $N_y = 64$ on ($E_0 = 9.0477\times10^{-6}$, gap 0.09025, $\Delta Q = 4.5834\times10^{-4}$); the row weight falls from 0.32 on the chain row to $3.6\times10^{-3}$ at $\Delta y = 8$ and $1.4\times10^{-11}$ at 48.
+
+\subsubsection*{8c.\ MUMPS reference at the TN sizes}
+
+\begin{function}{solve\_candidate(Lx, Ly, ell=64)}
+\code{solve(..., "mumps")} at \code{PC}: METIS factorization and shift-invert \code{eigsh(k=4)}; returns (time including the factorization,
+$E_f$, $\Delta Q$, gap) via \code{pair\_values}.
+\end{function}
+\code{cand\_scan} $= (7,6), (8,8), (9,9), (10,10)$, i.e.\ the TN sizes up to $1024\times1024$. Same resumable logic as section 5 with
+\code{py\_candidate.csv} (columns \code{Lx, Ly, ell, N, t, rss\_MB, E\_f, dQ, E\_gap, status}); there is no \code{RUN} flag, missing sizes are
+always run. The factorization depends only on the sparsity pattern, so the estimates of section 6 hold; the cell prints the table and a
+$2048\times2048$ line with time $t_{1024}\times\text{flops}_{2048}/\text{flops}_{1024}$ and the in-core memory estimate, both marked
+``\textasciitilde''. MUMPS: 1.0 s ($128\times64$), 10.7 s ($256^2$), 53.7 s ($512^2$), 295.1 s ($1024^2$); estimate at $2048^2$: $\sim$2326 s and $\sim$121 GB.
+
+\clearpage
+%======================================================================
+\section{Part III --- Scaling notebook (\code{msh\_substrate\_scaling.ipynb})}
+%======================================================================
+
+Loads the CSV files of the other two notebooks and compares the cost of the methods; it computes nothing expensive. Inputs:
+\code{tn\_zero\_modes.csv}, \code{py\_zero\_modes.csv}, \code{py\_mumps\_estimates.csv}, and in section 6 \code{tn\_candidate.csv},
+\code{py\_candidate.csv}.
+
+\subsection{Loading and helpers (cell 1)}
+
+\code{tn} is the TN table sorted by $N$; \code{py} the Python table (with string columns); \code{est} the MUMPS estimates. Rows of \code{py} whose
+status is not \code{"ok"} are printed as failed and left out of \code{M}, the dictionary of successful rows per method, sorted by $N$.
+
+\begin{function}{key(r), ref(a, col)}
+\code{key} returns $(L_x, L_y)$ of a row. \code{REF} maps sizes to the exact reference row: SuperLU rows, overwritten by MUMPS rows where MUMPS ran
+(i.e.\ MUMPS wherever available). \code{ref(a, col)} returns the reference value of column \code{col} for each row of \code{a}, NaN where there is
+none ($2048\times2048$).
+\end{function}
+
+\begin{function}{scan(a, which)}
+Rows of the width scan (\code{Lx == 6}) or the square scan (\code{Lx == Ly}), sorted by $N$. $64\times64$ belongs to both.
+\end{function}
+
+\begin{function}{fit(N, t, npts)}
+Power law $t = cN^p$ by least squares in $\log t$ against $\log N$ through the \code{npts} largest finite points; returns $(p, c, N_{\rm fit})$.
+\end{function}
+
+\paragraph{MUMPS at $2048\times2048$.} \code{t\_mumps\_2048} $= t_{\rm MUMPS}(1024^2)\cdot\text{flops}_{2048}/\text{flops}_{1024}$, the measured
+$1024\times1024$ time scaled by the ratio of the estimated factorization flops. The cell prints the number of sizes per method and the estimate
+in GB and hours. Printed: 121 GB in core, $\sim$7983 s (2.2 h).
+
+\subsection{Section 1: time}
+
+Two log--log panels (width scan, square scan) of the wall time against $N$: TN \code{t\_total} (build of $H$ and $K$, three DMRGs, pairing),
+and the eigensolver time (including the factorization) of SuperLU, MUMPS and dense. On the square panel, dashed power-law fits through the
+largest points (TN and MUMPS four, SuperLU and dense three) with the exponent in the legend, and the MUMPS estimate as an open diamond.
+Square scan: TN (DMRG) $N^{0.14}$, SuperLU $N^{1.54}$, MUMPS $N^{1.51}$, dense $N^{3.07}$.
+
+\subsection{Section 2: memory}
+
+One log--log panel of peak memory against $N$: the Julia process RSS (whole process up to that size, dominated by runtime and compiled code), the
+TN data itself (\code{mem\_K\_MB + mem\_psi\_MB}), the RSS of each Python method (its own forked process, baseline about 110 MB included), the
+MUMPS in-core estimates (open diamonds), the dense-matrix line $16D^2$ bytes, and the 188 GB of the machine. Printed: the growth exponents of the
+SuperLU and MUMPS RSS over their three largest square sizes (\code{fit}), measured against estimated MUMPS memory for $N\ge65\,536$, and the TN
+data and process RSS at $2048\times2048$. RSS grows as $N^{0.98}$ (SuperLU) and $N^{1.05}$ (MUMPS) over the three largest sizes; MUMPS measured/estimated: 1552/1326 MB ($256^2$), 6594/6117 MB ($512^2$), 28636/27913 MB ($1024^2$), i.e.\ the measured RSS is 17\,\%, 8\,\% and 2.6\,\% above the estimate; TN data 1.40 MB and Julia RSS 1841 MB at $2048\times2048$.
+
+\subsection{Section 3: accuracy}
+
+$|E_f-E_f^{\rm exact}|$ and $|\Delta Q-\Delta Q^{\rm exact}|$ against $N$ for TN, SuperLU and dense, with \code{ref} as the exact value; differences
+are clipped at $10^{-17}$ for the log scale (so SuperLU at sizes where it is its own reference shows at the floor). The TN values use
+\code{cutoff\_K = 1e-20}. Printed: the largest TN errors over the sizes with a reference, the MUMPS values at $1024\times1024$, and the TN values at
+$2048\times2048$ for comparison with the converged ones. Largest TN errors $2.5\times10^{-8}$ ($\Delta Q$) and $1.1\times10^{-11}$ ($E_f$); MUMPS at $1024^2$: $E_f = 3.7122847509\times10^{-4}$, $\Delta Q = -3.4466003632\times10^{-3}$; TN at $2048^2$: $3.7122846056\times10^{-4}$, $-3.4465999587\times10^{-3}$.
+
+\subsection{Section 4: bond dimensions}
+
+$\chi(H)$, $\chi(K)$ and the largest $\chi(\psi)$ against $N$ (semilog). The point of the plot, per the markdown: if they stay bounded, the TN cost
+grows only through the number of qubits, $\log_2N+2$. Both stay bounded: $\chi(H) = 7$, $\chi(K) = 31$--38, $\chi(\psi)\le26$ at every size.
+
+\subsection{Section 5: summary and crossover}
+
+A table per TN size: times of TN, SuperLU, MUMPS, dense, the ratio MUMPS/TN (above 1: TN faster), and the four peak memories. The helper
+\code{cell(m, k, col, fmt, w)} formats one entry: a dash if the method has no row for that size, \code{failed} if its status is not
+\code{"ok"}. At $2048\times2048$ the MUMPS columns hold the estimates, marked \textasciitilde.
+
+\paragraph{Crossover.} On the square scan, the points $(N, \log(t_{\rm MUMPS}/t_{\rm TN}))$ at the sizes where both ran (measured MUMPS only); between
+the first pair of consecutive sizes where the log-ratio changes from negative to non-negative, $N_c$ is found by linear interpolation of the
+log-ratio in $\log N$, and printed with $\sqrt{N_c}$ and the bracketing sizes. Printed: $N_c\approx3.47\times10^5$ sites ($\approx589\times589$), between $512^2$ and $1024^2$. The markdown adds that the MUMPS times at this point are inflated by subnormal floating-point arithmetic: with flush-to-zero the $1024^2$ factorization takes 107 s instead of 771 s, and the crossover would move to roughly $700^2$.
+
+\paragraph{Caveat on the MUMPS times at the benchmark point} (markdown). At $1024\times1024$ MUMPS needs 1013 s (a separate rerun: 1074 s, of
+which 902 s factorization), against 308 s at the second point with the same fill and the same peak memory (28.6 GB), and 14.5 times its
+$512\times512$ time where $N^{1.5}$ would give about 8. Since the factorization does the same work on the same pattern, the difference is in the
+arithmetic. A possible cause, not yet tested, is subnormal floating-point numbers: at $\mu = -7$ the Green's function decays within a fraction of
+a site, factor entries can underflow to $\sim10^{-300}$, and arithmetic on subnormals is slow on x86. If so, the crossover is partly set by this
+effect rather than by the cost of the algorithm. The $2048\times2048$ estimate inherits it, since it scales the measured $1024^2$ time.
+
+\subsection{Section 6: a substrate the zero modes leak into}
+
+Loads \code{tn\_candidate.csv} and \code{py\_candidate.csv} (successful rows only), sorted by $N$. The MUMPS time at $2048\times2048$ is estimated
+as above from the measured $1024^2$ time at this point (\code{t\_mc\_2048}); the memory estimate is the same as at the benchmark point (same
+pattern). The exact values \code{ex = (E\_f = 9.04770870e-06, dQ = 4.5834351e-04)} (converged MUMPS values of Python section 8c) are hard-coded.
+A table per TN size: TN and MUMPS times and their ratio, TN process RSS and MUMPS RSS (estimates marked \textasciitilde), $\chi_\psi$, and the TN
+errors $|E_f-\text{exact}|$, $|\Delta Q-\text{exact}|$. Two log--log panels (time, peak memory) show both methods at this point, the MUMPS estimate
+as a dotted segment from $1024^2$ to $2048^2$, and the square-scan curves of the benchmark point as open symbols. The crossover is computed as in
+section 5, here including the $2048^2$ estimate; if MUMPS is faster at every size the cell says so. Note that the TN RSS is the process peak
+including section 7, while the MUMPS RSS is per forked process.
+MUMPS/TN $= 0.00, 0.01, 0.03, 0.10, 0.91$ from $128\times64$ to $2048^2$; TN errors $\le2.6\times10^{-12}$ ($E_f$) and $\le9.0\times10^{-10}$ ($\Delta Q$); printed: no crossover up to $2048\times2048$ (MUMPS is faster at every size, with its estimate at $2048^2$), but the TN needs 2.3 GB there against $\sim$121 GB.
+
+\end{document}
