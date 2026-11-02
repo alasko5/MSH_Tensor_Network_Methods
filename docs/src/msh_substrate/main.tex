@@ -20,13 +20,15 @@
 \code{msh\_substrate\_tn.ipynb} & Julia, TensorBinding.jl / ITensors: quantics MPO, penalized DMRG\\
 \code{msh\_substrate\_python.ipynb} & Python, SciPy / MUMPS: sparse matrix, dense and shift-invert reference\\
 \code{msh\_substrate\_scaling.ipynb} & Python: cost of the methods against system size (plots)\\
+\code{substrate\_model.jl}, \code{substrate\_model.py} & the model and helpers the notebooks share (Julia, Python)\\
+\code{ftz.c} & C: flush-to-zero / denormals-are-zero switch for \code{mumps\_ftz}\\
 \end{tabular}}\\[1.2em]
 Repository \code{MSH\_Tensor\_Network\_Methods}, branch \code{msh-substrate}\\[0.3em]
-30 October 2026
+2 November 2026
 \end{center}
 
 \vspace{1em}
-\noindent This document explains every function and struct defined in the three notebooks (folder \code{msh\_substrate/}): what it
+\noindent This document explains every function and struct defined in the three notebooks and the two model files (folder \code{msh\_substrate/}): what it
 computes, the method, its inputs and outputs, the numerical settings that matter, and where it is used. Numbers stated in the
 markdown of the notebooks are quoted as such; numbers from the outputs are those of the executed notebooks in the repository. Function names in
 \code{typewriter} are those of the code.
@@ -175,6 +177,17 @@ and therefore $\Delta Q$ are the same in both bases.
 
 \subsection{Workflow and data files}
 
+\paragraph{Shared model files.} The model code of the two computing notebooks lives in \code{substrate\_model.jl} (included by the
+TN notebook's setup cell) and \code{substrate\_model.py} (\code{from substrate\_model import *} in the Python setup cell), so that the
+time-dependent notebooks can use the same code. The functions are documented below in the notebook section that explains them, each marked
+``(\code{substrate\_model.jl})'' or ``(\code{substrate\_model.py})''; the notebook cells keep a one-line comment where the code was, and small
+prints. Julia: the Pauli matrices, \code{diag\_mpo}, \code{vector\_mps}, \code{diag\_mpo\_exact}, \code{row\_profile\_mps}, \code{dense},
+\code{adjoint\_mpo} (section 1); \code{Substrate} and its accessors, \code{S\_z}, \code{S\_tilt} (2); \code{msh\_substrate} (3); \code{mpo\_size} (5);
+\code{quietly}, \code{norm\_Hψ}, \code{apply\_site}, \code{τz\_on}, \code{ΔQ\_mode}, \code{mps\_size}, \code{xqubits}, \code{Cconj}, \code{mirror\_x},
+\code{zero\_mode\_subspace}, \code{fermion\_from\_subspace} (6); \code{PC} (8). Python: the Pauli products, \code{S\_z}, \code{S\_tilt},
+\code{in\_fresh\_process} (setup); \code{shift}, \code{chain\_sites}, \code{ham} (1); \code{julia\_to\_python} (2); \code{pair\_values} (5);
+\code{PC} (8); and \code{ftz\_daz}, \code{restore\_csr} (5). The code in the files is the code the notebooks contained.
+
 Run order (all paths relative to \code{msh\_substrate/}):
 \begin{center}\code{msh\_substrate\_tn.ipynb} $\to$ \code{msh\_substrate\_python.ipynb} $\to$ \code{msh\_substrate\_scaling.ipynb}.\end{center}
 Python section 2 needs \code{data/tn\_check\_H.npz} from the TN notebook; Python section 8c needs \code{py\_mumps\_estimates.csv} from
@@ -227,12 +240,15 @@ Second point & \code{cand\_run} (section 8) & \code{solve\_candidate} (section 8
 
 The Hamiltonian is a quantics MPO on $\log_2N+2$ sites; the zero modes come from penalized DMRG on $K = H^2+\eta^2$. Dense matrices
 appear only in section 4, to export check data for the Python notebook. Packages: \code{TensorBinding} (alias \code{TB}), \code{ITensors},
-\code{ITensorMPS}, \code{LinearAlgebra}, \code{Printf}, \code{NPZ}, \code{Random}, \code{Logging}, \code{DelimitedFiles}.
+\code{ITensorMPS}, \code{LinearAlgebra}, \code{Printf}, \code{NPZ}, \code{Random}, \code{Logging}, \code{DelimitedFiles}. The setup cell runs
+\code{include("substrate\_model.jl")}, which loads \code{TensorBinding}, \code{ITensors}, \code{ITensorMPS}, \code{LinearAlgebra}, \code{Random} and
+\code{Logging} itself and defines everything of sections 1--3 and 6, \code{mpo\_size} and \code{PC} (see ``Shared model files'').
 
 \subsection{Section 1: setup and helpers}
 
 Global settings: \code{BLAS.set\_num\_threads(1)} (single thread, as in the Python notebook, so that timings compare like with like);
-the Pauli matrices \code{σ0, σx, σy, σz} (\code{ComplexF64}); \code{DATA\_DIR = "data"}, created if missing, for the check data.
+the Pauli matrices \code{σ0, σx, σy, σz} (\code{ComplexF64}, \code{substrate\_model.jl}); \code{DATA\_DIR = "data"}, created if missing, for the check data.
+The helpers below are in \code{substrate\_model.jl}.
 
 \begin{function}{diag\_mpo(ψ, pos)}
 \begin{Verbatim}
@@ -285,6 +301,8 @@ the Hermitian conjugate of an MPO: complex conjugation of the tensors and exchan
 
 \subsection{Section 2: geometry}
 
+The code of this section is in \code{substrate\_model.jl}; the notebook cell prints one example.
+
 \begin{function}{struct Substrate; Nx, Ny, nsites, chain\_row, chain\_x}
 \begin{Verbatim}
 struct Substrate
@@ -306,6 +324,8 @@ lambdas exist in the Python notebook.
 \end{function}
 
 \subsection{Section 3: Hamiltonian MPO}
+
+\code{msh\_substrate} is in \code{substrate\_model.jl}; the notebook cell builds one small example and prints its bond dimension.
 
 \begin{function}{msh\_substrate(g, S; t=1.0, μ=-7.0, α=0.9, Δ=2.4, J=5.8, cutoff=1e-13, sites=nothing)}
 Returns \code{(HB, [ns; ss; pos])}: the BdG MPO of the chain with texture \code{S(ix)} on substrate \code{g}, and its site list. \code{ns} and
@@ -363,7 +383,7 @@ Python section 2.
 \subsection{Section 5: MPO size and build time against system size}
 
 \begin{function}{mpo\_size(H)}
-\code{sum(length(storage(T)) for T in H)}: the number of stored elements of the MPO tensors, the memory measure compared with the number of
+(\code{substrate\_model.jl}) \code{sum(length(storage(T)) for T in H)}: the number of stored elements of the MPO tensors, the memory measure compared with the number of
 nonzeros of the sparse matrix (Python section 4). Also used for $K$ in \code{zm\_run} and \code{cand\_run}.
 \end{function}
 
@@ -373,6 +393,8 @@ a second build with \code{@elapsed}; it collects $(L_x, L_y, \ell, N, \chi, \tex
 and prints $N$, $D$, $\chi(H)$, the MPO elements and the build time. At $2048\times2048$: $\chi(H) = 7$, 3116 MPO elements, build 0.04 s; all builds take 0.01--0.04 s, and the number of elements grows linearly in the number of qubits (612 for one row of 64 sites).
 
 \subsection{Section 6: zero-mode pipeline}
+
+The functions of this section are in \code{substrate\_model.jl}; the notebook cell only lists the two main ones.
 
 The pipeline of \code{msh\_chain\_tn.ipynb} (sections 8--9) adapted to the substrate: penalized DMRG for the near-zero subspace, $\hat X$
 localization and pairing, then $\Delta Q$.
@@ -506,7 +528,7 @@ $K$ + MPS 1.40 MB at $2048\times2048$; the mirror start at every size; at $2048\
 
 \subsection{Section 8: a substrate the zero modes leak into}
 
-\code{RUN\_CAND = true}; \code{cand\_file = "tn\_candidate.csv"}; \code{const PC = (μ = -3.0, Δ = 0.6, J = 3.0)} ($t$ and $\alpha$ keep their
+\code{RUN\_CAND = true}; \code{cand\_file = "tn\_candidate.csv"}; \code{const PC = (μ = -3.0, Δ = 0.6, J = 3.0)} (\code{substrate\_model.jl}; $t$ and $\alpha$ keep their
 defaults); \code{cand\_scan} $= (7,6), (8,8), (9,9), (10,10), (11,11)$, i.e.\ $128\times64$ and $256^2$ to $2048^2$ sites; $\ell = 64$, \code{S\_z}.
 
 \begin{function}{cand\_run(Lx, Ly; ℓ=64)}
@@ -542,12 +564,17 @@ $\chi_\psi$ is 114--115 where $\psi_1$ came out a single Majorana (\code{C\_perp
 The same model as a sparse CSR matrix (SciPy), with dense diagonalization where it fits and shift-invert Lanczos with a sparse direct
 solver beyond. Packages: NumPy, \code{scipy.linalg}, \code{scipy.sparse}, \code{scipy.sparse.linalg} (\code{eigsh}, \code{splu},
 \code{LinearOperator}), \code{mumps} (python-mumps, MUMPS 5.8 sequential, conda-forge), \code{multiprocessing}, \code{resource}, matplotlib.
+The setup cell imports the model with \code{from substrate\_model import *}: the Pauli products, \code{S\_z}, \code{S\_tilt}, \code{shift},
+\code{chain\_sites}, \code{ham}, \code{julia\_to\_python}, \code{pair\_values}, \code{PC}, \code{in\_fresh\_process}, \code{ftz\_daz} and
+\code{restore\_csr} are defined in \code{substrate\_model.py} (see ``Shared model files''), which also sets the thread variables to 1 if they are
+not set yet.
 
 \subsection{Setup}
 
 The thread variables are set to 1 before NumPy is imported. \code{DATA\_DIR = "data"}. Pauli matrices \code{s0, sx, sy, sz} and the
 Kronecker products (first factor Nambu $\tau$, second spin $\sigma$) \code{tzs0} $=\tau_z\sigma_0$, \code{txs0}, \code{t0sx}, \code{t0sy},
-\code{t0sz}, \code{tzsx}, \code{tzsy}. \code{S\_z} and \code{S\_tilt} are the same textures as in Julia.
+\code{t0sz}, \code{tzsx}, \code{tzsy}. \code{S\_z} and \code{S\_tilt} are the same textures as in Julia. These and \code{in\_fresh\_process} are in
+\code{substrate\_model.py}.
 
 \begin{function}{in\_fresh\_process(fn, *args)}
 \begin{Verbatim}
@@ -570,6 +597,8 @@ instead of hanging.
 \end{function}
 
 \subsection{Section 1: Hamiltonian}
+
+\code{shift}, \code{chain\_sites} and \code{ham} are in \code{substrate\_model.py}; the notebook cell prints the size and Hermiticity of \code{ham(3, 1, 6)}.
 
 \begin{function}{shift(n)}
 $n\times n$ CSR matrix with ones on the first subdiagonal, $\ket i\to\ket{i+1}$, open boundary.
@@ -597,7 +626,7 @@ Used by every section.
 \subsection{Section 2: check against the tensor-network Hamiltonian}
 
 \begin{function}{julia\_to\_python(Hj, N)}
-\begin{Verbatim}
+(\code{substrate\_model.py}) \begin{Verbatim}
 W[4*n + 0, 0*N + n] = 1            # c_up      <- (nb = 0, up)
 W[4*n + 1, 1*N + n] = 1            # c_dn      <- (nb = 0, dn)
 W[4*n + 2, 2*N + 1*N + n] = 1      # c_dag_dn  <- (nb = 1, dn)
@@ -633,7 +662,7 @@ Settings: \code{RUN\_ZM = True}; \code{DENSE\_MAX\_D = 16384} (dense only up to 
 \code{zm\_scan} as in Julia without $2048\times2048$ (13 sizes, increasing $N$); $\ell = 12$, \code{S\_z}.
 
 \begin{function}{pair\_values(E, V)}
-From a few eigenpairs around zero: the two smallest $|E|$ are the pair, and \code{ip} is the one with $E>0$. Returns
+(\code{substrate\_model.py}) From a few eigenpairs around zero: the two smallest $|E|$ are the pair, and \code{ip} is the one with $E>0$. Returns
 $E_f = E_{ip}$, $\Delta Q = \sum_n(|v_{n0}|^2+|v_{n1}|^2) - (|v_{n2}|^2+|v_{n3}|^2) = \bra{\psi_f}\tau_z\ket{\psi_f}$ (eigenvectors are normalized), and
 the gap, the third smallest $|E|$.
 \end{function}
@@ -655,10 +684,11 @@ build of $H$.
   3.1 s for SCOTCH and 3.2 s for AMD), and MUMPS's 64-bit indices let it factorize $1024\times1024$.
 \item \code{"mumps\_ftz"}: the same as \code{"mumps"} with the flush-to-zero and denormals-are-zero bits (FTZ, bit 15; DAZ, bit 6) of the
   x86 MXCSR register set for the factorization and the solves, so that subnormal numbers are treated as zero. Both MUMPS methods call
-  \code{ftz\_lib.ftz\_daz(on)} (on for \code{mumps\_ftz}, off for \code{mumps}) before the timer and \code{ftz\_lib.restore\_csr} in a
-  \code{finally}, so the kernel's MXCSR is unchanged after the warm-up \code{solve} that runs in the kernel. \code{ftz\_lib} is
-  \code{msh\_substrate/ftz.c} (two functions, \code{ftz\_daz(on)} returning the previous MXCSR and \code{restore\_csr(c)}), compiled with
-  \code{cc -O2 -shared -fPIC} on first use into \code{data/libftz.so} and loaded with \code{ctypes}. \code{MUMPS\_METHODS = ("mumps", "mumps\_ftz")}.
+  \code{ftz\_daz(on)} (on for \code{mumps\_ftz}, off for \code{mumps}) before the timer and \code{restore\_csr} in a
+  \code{finally}, so the kernel's MXCSR is unchanged after the warm-up \code{solve} that runs in the kernel. \code{ftz\_daz} and
+  \code{restore\_csr} (\code{substrate\_model.py}) call the two functions of \code{msh\_substrate/ftz.c} (\code{ftz\_daz(on)} returning the
+  previous MXCSR, \code{restore\_csr(c)}), which the module compiles with \code{cc -O2 -shared -fPIC} on first use into
+  \code{msh\_substrate/data/libftz.so} and loads with \code{ctypes}. \code{MUMPS\_METHODS = ("mumps", "mumps\_ftz")}.
 \item \code{"dense"}: \code{la.eigh(H.toarray(), subset\_by\_index=[2N-2, 2N+1])}, the four eigenpairs in the middle of the spectrum, about twice
   as fast as the full spectrum; the $O(D^3)$ tridiagonal reduction dominates either way.
 \end{itemize}
@@ -753,7 +783,7 @@ the band, and four selected points, including $(0.6, -3, 3)$. 1305 points in 198
 \subsubsection*{8b.\ The point \texorpdfstring{$\Delta = 0.6$, $\mu = -3$, $J = 3$}{Delta = 0.6, mu = -3, J = 3}}
 
 \begin{function}{pair\_levels(Lx, Ly, ell)}
-\code{eigsh} (6 levels) at \code{PC = dict(mu=-3.0, Delta=0.6, J=3.0)}. Returns $|E_0|$, $|E_2|$, $\Delta Q$ of the $+E$ member of the pair, and
+\code{eigsh} (6 levels) at \code{PC = dict(mu=-3.0, Delta=0.6, J=3.0)} (\code{substrate\_model.py}). Returns $|E_0|$, $|E_2|$, $\Delta Q$ of the $+E$ member of the pair, and
 the weight per site of that state as an $N_y\times N_x$ array.
 \end{function}
 Three checks, each size in a forked process: (1) splitting against chain length, $\ell = 16\dots128$ on $256\times32$, printing $E_0$, $E_2$,
