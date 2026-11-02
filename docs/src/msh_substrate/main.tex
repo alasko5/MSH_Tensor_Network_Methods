@@ -62,9 +62,9 @@ trivial superconductor and the zero modes stay on the chain row, and the leaking
 \item \emph{Benchmark point.} The bond dimensions do not grow with the system size: $\chi(H) = 7$, $\chi(K)\le38$, $\chi(\psi)\le26$ from one row
   to $2048\times2048$ sites. The TN time grows as $N^{0.14}$ (126 s at $1024^2$, 140 s at $2048^2$, 1.8 GB process memory), against
   $N^{1.5}$ for SuperLU and MUMPS (MUMPS: 70 s at $512^2$, 1013 s and 28.6 GB at $1024^2$; SuperLU runs out of memory there) and $N^{3.07}$ for
-  dense diagonalization. The measured crossover is at about $589^2$ sites. The MUMPS times at this point are inflated by subnormal
-  floating-point arithmetic (with flush-to-zero the $1024^2$ factorization takes 107 s instead of 771 s); corrected, the crossover is
-  at roughly $700^2$. TN errors: $\le2.5\times10^{-8}$ in $\Delta Q$ and $\le1.1\times10^{-11}$ in $E_f$.
+  dense diagonalization. At this point the MUMPS factors contain subnormal numbers, which are slow on x86; with flush-to-zero /
+  denormals-are-zero (\code{mumps\_ftz}) the same results take 43 s at $512^2$ and 236 s at $1024^2$. The crossover with the TN is at about
+  $589^2$ sites for MUMPS out of the box and at about $786^2$ with flush-to-zero. TN errors: $\le2.5\times10^{-8}$ in $\Delta Q$ and $\le1.1\times10^{-11}$ in $E_f$.
 \item \emph{Leaking point.} The bond dimensions are larger but still flat in the size ($\chi_\psi = 114$--137, $\chi_K = 31$--37), and the TN
   time is 1.3--3.0 thousand seconds from $256^2$ to $2048^2$. MUMPS is faster at every size up to $1024^2$ (295 s) and about equal at
   $2048^2$ (estimate 2326 s against 2556 s), where it needs $\sim$121 GB against 2.3 GB for the TN. TN errors $\le2.6\times10^{-12}$ in $E_f$ and
@@ -192,7 +192,7 @@ File & Written by & Content\\
 \code{data/zm\_progress.log} & TN sec.~7 & one line per finished size of the benchmark\\
 \code{tn\_zero\_modes.csv} & TN sec.~7 & TN benchmark, 22 columns (committed)\\
 \code{tn\_candidate.csv} & TN sec.~8 & TN at the second point, 24 columns (committed, resumable)\\
-\code{py\_zero\_modes.csv} & Py sec.~5 & dense / SuperLU / MUMPS benchmark (resumable)\\
+\code{py\_zero\_modes.csv} & Py sec.~5 & dense / SuperLU / MUMPS / MUMPS with FTZ/DAZ benchmark (resumable)\\
 \code{py\_mumps\_estimates.csv} & Py sec.~6 & MUMPS analysis estimates, $L = 7\dots11$\\
 \code{py\_mu\_scan.csv} & Py sec.~8a & 1305 points of the $\mu\times J\times\Delta$ scan\\
 \code{py\_candidate.csv} & Py sec.~8c & MUMPS at the second point (resumable)\\
@@ -653,6 +653,12 @@ build of $H$.
 \item \code{"mumps"}: \code{mumps.Context().factor(H.tocoo(), ordering="metis")} (analysis and numerical factorization with METIS nested
   dissection), then the same \code{eigsh} with \code{ctx.solve}. Per the markdown, METIS gave the smallest factorization at $256^2$ (2.6 s, against
   3.1 s for SCOTCH and 3.2 s for AMD), and MUMPS's 64-bit indices let it factorize $1024\times1024$.
+\item \code{"mumps\_ftz"}: the same as \code{"mumps"} with the flush-to-zero and denormals-are-zero bits (FTZ, bit 15; DAZ, bit 6) of the
+  x86 MXCSR register set for the factorization and the solves, so that subnormal numbers are treated as zero. Both MUMPS methods call
+  \code{ftz\_lib.ftz\_daz(on)} (on for \code{mumps\_ftz}, off for \code{mumps}) before the timer and \code{ftz\_lib.restore\_csr} in a
+  \code{finally}, so the kernel's MXCSR is unchanged after the warm-up \code{solve} that runs in the kernel. \code{ftz\_lib} is
+  \code{msh\_substrate/ftz.c} (two functions, \code{ftz\_daz(on)} returning the previous MXCSR and \code{restore\_csr(c)}), compiled with
+  \code{cc -O2 -shared -fPIC} on first use into \code{data/libftz.so} and loaded with \code{ctypes}. \code{MUMPS\_METHODS = ("mumps", "mumps\_ftz")}.
 \item \code{"dense"}: \code{la.eigh(H.toarray(), subset\_by\_index=[2N-2, 2N+1])}, the four eigenpairs in the middle of the spectrum, about twice
   as fast as the full spectrum; the $O(D^3)$ tridiagonal reduction dominates either way.
 \end{itemize}
@@ -663,7 +669,9 @@ $(L_x, L_y, \text{method})$ already in the file. If \code{RUN\_ZM}: one warm-up 
 peak of a forked process is printed (\code{in\_fresh\_process(lambda: None)}); the header is written if nothing is done; then for each size and
 method (dense only while $D\le$ \code{DENSE\_MAX\_D}) a missing row is computed with \code{in\_fresh\_process(solve, ...)} and appended at once. A
 failed or killed run is recorded with NaN values and its status. Finally the file is read, sorted by $(N, \text{method})$ and printed.
-\code{RUN\_ZM = False} only loads it; deleting the file starts over. MUMPS at $1024\times1024$: 1013 s and 28.6 GB (the slowdown of this point is explained in Part III, section 5); dense at $64\times64$: 886 s and 4.4 GB; SuperLU at $1024\times1024$: \code{MemoryError: SuperLU: not enough memory to perform factorization}.
+\code{RUN\_ZM = False} only loads it; deleting the file starts over. MUMPS at $1024\times1024$: 1013 s and 28.6 GB, with FTZ/DAZ 236 s and
+the same memory (explained in Part III, section 5). The \code{mumps\_ftz} rows were appended later from a kernel that had run only the setup
+cells, so their baseline is about 80 MB instead of 110 MB; dense at $64\times64$: 886 s and 4.4 GB; SuperLU at $1024\times1024$: \code{MemoryError: SuperLU: not enough memory to perform factorization}.
 
 \subsection{Section 6: MUMPS estimates beyond the benchmark}
 
@@ -777,7 +785,8 @@ Loads the CSV files of the other two notebooks and compares the cost of the meth
 \subsection{Loading and helpers (cell 1)}
 
 \code{tn} is the TN table sorted by $N$; \code{py} the Python table (with string columns); \code{est} the MUMPS estimates. Rows of \code{py} whose
-status is not \code{"ok"} are printed as failed and left out of \code{M}, the dictionary of successful rows per method, sorted by $N$.
+status is not \code{"ok"} are printed as failed and left out of \code{M}, the dictionary of successful rows per method (\code{superlu},
+\code{mumps}, \code{mumps\_ftz}, \code{dense}), sorted by $N$. \code{mu} and \code{mf} map sizes to the MUMPS rows without and with FTZ/DAZ.
 
 \begin{function}{key(r), ref(a, col)}
 \code{key} returns $(L_x, L_y)$ of a row. \code{REF} maps sizes to the exact reference row: SuperLU rows, overwritten by MUMPS rows where MUMPS ran
@@ -795,14 +804,15 @@ Power law $t = cN^p$ by least squares in $\log t$ against $\log N$ through the \
 
 \paragraph{MUMPS at $2048\times2048$.} \code{t\_mumps\_2048} $= t_{\rm MUMPS}(1024^2)\cdot\text{flops}_{2048}/\text{flops}_{1024}$, the measured
 $1024\times1024$ time scaled by the ratio of the estimated factorization flops. The cell prints the number of sizes per method and the estimate
-in GB and hours. Printed: 121 GB in core, $\sim$7983 s (2.2 h).
+in GB and hours. \code{t\_mumps\_ftz\_2048} is the same from the FTZ/DAZ time. Printed: 121 GB in core, $\sim$7983 s (2.2 h), with FTZ/DAZ $\sim$1859 s.
 
 \subsection{Section 1: time}
 
 Two log--log panels (width scan, square scan) of the wall time against $N$: TN \code{t\_total} (build of $H$ and $K$, three DMRGs, pairing),
-and the eigensolver time (including the factorization) of SuperLU, MUMPS and dense. On the square panel, dashed power-law fits through the
-largest points (TN and MUMPS four, SuperLU and dense three) with the exponent in the legend, and the MUMPS estimate as an open diamond.
-Square scan: TN (DMRG) $N^{0.14}$, SuperLU $N^{1.54}$, MUMPS $N^{1.51}$, dense $N^{3.07}$.
+and the eigensolver time (including the factorization) of SuperLU, MUMPS, MUMPS (FTZ/DAZ) and dense. On the square panel, dashed power-law
+fits through the largest points (TN and both MUMPS series four, SuperLU and dense three) with the exponent in the legend, and the two MUMPS
+estimates as open diamonds. Square scan: TN (DMRG) $N^{0.14}$, SuperLU $N^{1.54}$, MUMPS $N^{1.51}$, MUMPS (FTZ/DAZ) $N^{1.19}$, dense $N^{3.07}$.
+The FTZ/DAZ exponent is lower because the subnormal slowdown grows with the size (1.6 times at $512^2$, 4.3 at $1024^2$).
 
 \subsection{Section 2: memory}
 
@@ -810,13 +820,14 @@ One log--log panel of peak memory against $N$: the Julia process RSS (whole proc
 TN data itself (\code{mem\_K\_MB + mem\_psi\_MB}), the RSS of each Python method (its own forked process, baseline about 110 MB included), the
 MUMPS in-core estimates (open diamonds), the dense-matrix line $16D^2$ bytes, and the 188 GB of the machine. Printed: the growth exponents of the
 SuperLU and MUMPS RSS over their three largest square sizes (\code{fit}), measured against estimated MUMPS memory for $N\ge65\,536$, and the TN
-data and process RSS at $2048\times2048$. RSS grows as $N^{0.98}$ (SuperLU) and $N^{1.05}$ (MUMPS) over the three largest sizes; MUMPS measured/estimated: 1552/1326 MB ($256^2$), 6594/6117 MB ($512^2$), 28636/27913 MB ($1024^2$), i.e.\ the measured RSS is 17\,\%, 8\,\% and 2.6\,\% above the estimate; TN data 1.40 MB and Julia RSS 1841 MB at $2048\times2048$.
+data and process RSS at $2048\times2048$. RSS grows as $N^{0.98}$ (SuperLU) and $N^{1.05}$ (MUMPS) over the three largest sizes; MUMPS measured/estimated: 1552/1326 MB ($256^2$), 6594/6117 MB ($512^2$), 28636/27913 MB ($1024^2$), i.e.\ the measured RSS is 17\,\%, 8\,\% and 2.6\,\% above the estimate; MUMPS with FTZ/DAZ within 0.7\,\% of MUMPS for $N\ge65\,536$ (not plotted); TN data 1.40 MB and Julia RSS 1841 MB at $2048\times2048$.
 
 \subsection{Section 3: accuracy}
 
-$|E_f-E_f^{\rm exact}|$ and $|\Delta Q-\Delta Q^{\rm exact}|$ against $N$ for TN, SuperLU and dense, with \code{ref} as the exact value; differences
+$|E_f-E_f^{\rm exact}|$ and $|\Delta Q-\Delta Q^{\rm exact}|$ against $N$ for TN, SuperLU, MUMPS (FTZ/DAZ) and dense, with \code{ref} as the exact value; differences
 are clipped at $10^{-17}$ for the log scale (so SuperLU at sizes where it is its own reference shows at the floor). The TN values use
-\code{cutoff\_K = 1e-20}. Printed: the largest TN errors over the sizes with a reference, the MUMPS values at $1024\times1024$, and the TN values at
+\code{cutoff\_K = 1e-20}. Printed: the largest TN errors over the sizes with a reference, the largest relative differences of MUMPS with FTZ/DAZ from MUMPS
+($1.9\times10^{-12}$ in $E_f$, $1.9\times10^{-11}$ in $\Delta Q$, $3.0\times10^{-13}$ in the gap), the MUMPS values at $1024\times1024$, and the TN values at
 $2048\times2048$ for comparison with the converged ones. Largest TN errors $2.5\times10^{-8}$ ($\Delta Q$) and $1.1\times10^{-11}$ ($E_f$); MUMPS at $1024^2$: $E_f = 3.7122847509\times10^{-4}$, $\Delta Q = -3.4466003632\times10^{-3}$; TN at $2048^2$: $3.7122846056\times10^{-4}$, $-3.4465999587\times10^{-3}$.
 
 \subsection{Section 4: bond dimensions}
@@ -826,20 +837,25 @@ grows only through the number of qubits, $\log_2N+2$. Both stay bounded: $\chi(H
 
 \subsection{Section 5: summary and crossover}
 
-A table per TN size: times of TN, SuperLU, MUMPS, dense, the ratio MUMPS/TN (above 1: TN faster), and the four peak memories. The helper
-\code{cell(m, k, col, fmt, w)} formats one entry: a dash if the method has no row for that size, \code{failed} if its status is not
-\code{"ok"}. At $2048\times2048$ the MUMPS columns hold the estimates, marked \textasciitilde.
+A table per TN size: times of TN, SuperLU, MUMPS, MUMPS with FTZ/DAZ (\code{MU FTZ}), dense, the ratios MUMPS/TN and MUMPS (FTZ/DAZ)/TN (above
+1: TN faster), and the four peak memories (TN, SuperLU, MUMPS, dense). The helper \code{cell(m, k, col, fmt, w)} formats one entry: a dash if the
+method has no row for that size, \code{failed} if its status is not \code{"ok"}. At $2048\times2048$ the MUMPS columns hold the estimates, marked
+\textasciitilde. MUMPS/TN $= 0.59$, 8.05 and FTZ/TN $= 0.36$, 1.88 at $512^2$, $1024^2$; at $2048^2$ (estimates) 56.9 and 13.3.
 
-\paragraph{Crossover.} On the square scan, the points $(N, \log(t_{\rm MUMPS}/t_{\rm TN}))$ at the sizes where both ran (measured MUMPS only); between
-the first pair of consecutive sizes where the log-ratio changes from negative to non-negative, $N_c$ is found by linear interpolation of the
-log-ratio in $\log N$, and printed with $\sqrt{N_c}$ and the bracketing sizes. Printed: $N_c\approx3.47\times10^5$ sites ($\approx589\times589$), between $512^2$ and $1024^2$. The markdown adds that the MUMPS times at this point are inflated by subnormal floating-point arithmetic: with flush-to-zero the $1024^2$ factorization takes 107 s instead of 771 s, and the crossover would move to roughly $700^2$.
+\paragraph{Crossover.} For each MUMPS series, on the square scan, the points $(N, \log(t_{\rm MUMPS}/t_{\rm TN}))$ at the sizes where both ran
+(measured MUMPS only); between the first pair of consecutive sizes where the log-ratio changes from negative to non-negative, $N_c$ is found by
+linear interpolation of the log-ratio in $\log N$, and printed with $\sqrt{N_c}$ and the bracketing sizes. Printed: MUMPS $N_c\approx3.47\times10^5$
+sites ($\approx589\times589$), MUMPS (FTZ/DAZ) $N_c\approx6.17\times10^5$ ($\approx786\times786$), both between $512^2$ and $1024^2$.
 
-\paragraph{Caveat on the MUMPS times at the benchmark point} (markdown). At $1024\times1024$ MUMPS needs 1013 s (a separate rerun: 1074 s, of
-which 902 s factorization), against 308 s at the second point with the same fill and the same peak memory (28.6 GB), and 14.5 times its
-$512\times512$ time where $N^{1.5}$ would give about 8. Since the factorization does the same work on the same pattern, the difference is in the
-arithmetic. A possible cause, not yet tested, is subnormal floating-point numbers: at $\mu = -7$ the Green's function decays within a fraction of
-a site, factor entries can underflow to $\sim10^{-300}$, and arithmetic on subnormals is slow on x86. If so, the crossover is partly set by this
-effect rather than by the cost of the algorithm. The $2048\times2048$ estimate inherits it, since it scales the measured $1024^2$ time.
+\paragraph{MUMPS and subnormal numbers} (markdown). Without flush-to-zero MUMPS needs 1013 s at $1024\times1024$, 14.5 times its $512\times512$
+time where $N^{1.5}$ would give about 8, and three times as long as at the second point (308 s) with the same fill and the same peak memory
+(28.6 GB). The cause is subnormal numbers: at $\mu=-7$ the Green's function decays within a fraction of a site, factor entries underflow
+towards $10^{-308}$, and arithmetic on subnormals is slow on x86. A table of factorization times alone (separate runs) shows it: at
+$\mu=-7$ 29.8 s / 14.8 s ($512^2$, default / FTZ/DAZ) and 770.5 s / 106.6 s ($1024^2$); at the second point 14.4 s / 14.4 s and 112.4 s / 107.7 s,
+so with FTZ/DAZ both points cost the same, as the fill says they should. The results do not change ($E_f$, $\Delta Q$, gap agree to
+$2\times10^{-11}$ relative at every size, at $512^2$ in every printed digit). The markdown calls the FTZ/DAZ series the cost of the algorithm and
+its crossover ($\approx786^2$) the fair one; the default series is MUMPS out of the box. The $2048^2$ estimate falls from $\sim$8000 s to
+$\sim$1900 s, still 13 times the TN time.
 
 \subsection{Section 6: a substrate the zero modes leak into}
 
@@ -848,7 +864,9 @@ as above from the measured $1024^2$ time at this point (\code{t\_mc\_2048}); the
 pattern). The exact values \code{ex = (E\_f = 9.04770870e-06, dQ = 4.5834351e-04)} (converged MUMPS values of Python section 8c) are hard-coded.
 A table per TN size: TN and MUMPS times and their ratio, TN process RSS and MUMPS RSS (estimates marked \textasciitilde), $\chi_\psi$, and the TN
 errors $|E_f-\text{exact}|$, $|\Delta Q-\text{exact}|$. Two log--log panels (time, peak memory) show both methods at this point, the MUMPS estimate
-as a dotted segment from $1024^2$ to $2048^2$, and the square-scan curves of the benchmark point as open symbols. The crossover is computed as in
+as a dotted segment from $1024^2$ to $2048^2$, and the square-scan curves of the benchmark point as open symbols (in the time panel
+also MUMPS with FTZ/DAZ). The second point has no subnormal slowdown (factorization 107.7 s with FTZ/DAZ against 112.4 s without at $1024^2$),
+so its MUMPS times are not rerun with FTZ/DAZ. The crossover is computed as in
 section 5, here including the $2048^2$ estimate; if MUMPS is faster at every size the cell says so. Note that the TN RSS is the process peak
 including section 7, while the MUMPS RSS is per forked process.
 MUMPS/TN $= 0.00, 0.01, 0.03, 0.10, 0.91$ from $128\times64$ to $2048^2$; TN errors $\le2.6\times10^{-12}$ ($E_f$) and $\le9.0\times10^{-10}$ ($\Delta Q$); printed: no crossover up to $2048\times2048$ (MUMPS is faster at every size, with its estimate at $2048^2$), but the TN needs 2.3 GB there against $\sim$121 GB.
