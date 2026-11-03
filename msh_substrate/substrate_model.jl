@@ -72,11 +72,13 @@ S_tilt(ix) = (sin(0.3ix) * cos(0.7), sin(0.3ix) * sin(0.7), cos(0.3ix))
 
 # ── Hamiltonian MPO (section 3) ──
 """
-    msh_substrate(g, S; t, μ, α, Δ, J, cutoff, sites) -> (H_BdG::MPO, sites)
+    msh_substrate(g, S; t, μ, α, Δ, J, cutoff, sites, profile_cutoff) -> (H_BdG::MPO, sites)
 
-BdG MPO of the MSH chain (spin texture `S(ix)`) on the substrate `g`. `sites` reuses existing site indices.
+BdG MPO of the MSH chain (spin texture `S(ix)`) on the substrate `g`. `sites` reuses existing site indices. `profile_cutoff` is the
+truncation cutoff (discarded squared weight) of the exchange profiles along x; the default 1e-14 is exact for the static textures,
+while a generic texture (the ramp) needs 1e-20 (with 1e-14 its entries are off by up to ~5e-7).
 """
-function msh_substrate(g::Substrate, S; t=1.0, μ=-7.0, α=0.9, Δ=2.4, J=5.8, cutoff=1e-13, sites=nothing)
+function msh_substrate(g::Substrate, S; t=1.0, μ=-7.0, α=0.9, Δ=2.4, J=5.8, cutoff=1e-13, sites=nothing, profile_cutoff=1e-14)
     nx = Nx(g)
     ns, ss, pos = isnothing(sites) ? (TB.nambu_index(), TB.spin_index(), siteinds("Qubit", g.Lx + g.Ly)) :
                                      (sites[1], sites[2], sites[3:end])
@@ -102,7 +104,7 @@ function msh_substrate(g::Substrate, S; t=1.0, μ=-7.0, α=0.9, Δ=2.4, J=5.8, c
         for ix in xs
             w[ix + 1] = J * S(ix)[k]
         end
-        maximum(abs, w) > 1e-14 && push!(terms, P(σ, diag_mpo(row_profile_mps(row(iy0), w, ypos, xpos), pos)))
+        maximum(abs, w) > 1e-14 && push!(terms, P(σ, diag_mpo(row_profile_mps(row(iy0), w, ypos, xpos; cutoff=profile_cutoff), pos)))
     end
     H0 = +(terms...; cutoff)
 
@@ -190,3 +192,22 @@ end
 
 # ── the second parameter point, where the zero modes leak into the substrate (section 8) ──
 const PC = (μ = -3.0, Δ = 0.6, J = 3.0)
+
+# ── spin ramp of the chain (time-dependent notebooks; the same as Ramp in substrate_model.py) ──
+# Two-sided ramp: the chain spins rotate from ẑ to the in-plane antiferromagnet from both ends inwards, one site after the other
+# (site k from the nearer end starts at t = step_T·k·rot_T and takes rot_T), until only the middle ℓ_final sites are along ẑ.
+# S = (0, sin θ, cos θ), θ = (−1)^ix (π/2) f, f = smoothstep(t/rot_T − step_T·k); ix is the absolute column.
+const RAMP_ELL_FINAL, RAMP_STEP_T = 4, 0.1
+smoothstep(τ) = τ <= 0 ? 0.0 : τ >= 1 ? 1.0 : sin(π * τ / 2)^2
+"Time at which the last rotating site has finished."
+ramp_duration(ℓ, rot_T; ℓ_final=RAMP_ELL_FINAL, step_T=RAMP_STEP_T) = (((ℓ - ℓ_final) ÷ 2 - 1) * step_T + 1) * rot_T
+"Rotation fraction f ∈ [0, 1] of chain site n = 0 … ℓ−1 at time t."
+ramp_f(t, n, ℓ, rot_T; ℓ_final=RAMP_ELL_FINAL, step_T=RAMP_STEP_T) =
+    (k = min(n, ℓ - 1 - n); k >= (ℓ - ℓ_final) ÷ 2 ? 0.0 : smoothstep(t / rot_T - step_T * k))
+"Spin texture S(ix) of the chain of `g` at time t."
+ramp_texture(t, g::Substrate, rot_T; kw...) =
+    (x0 = first(chain_x(g)); ix -> (θ = (-1)^ix * (π / 2) * ramp_f(t, ix - x0, g.ℓ, rot_T; kw...); (0.0, sin(θ), cos(θ))))
+"BdG MPO of the ramp at time t on the existing `sites` (parameters P as for msh_substrate; exchange profiles with cutoff 1e-20)."
+ramp_mpo(t, g::Substrate, rot_T, sites; P...) = first(msh_substrate(g, ramp_texture(t, g, rot_T); sites, profile_cutoff=1e-20, P...))
+"Number of steps between recorded snapshots: about n snapshots over the ramp (the same rule in substrate_model.py)."
+snap_every(T, dt; n=130) = max(1, round(Int, T / dt / n))

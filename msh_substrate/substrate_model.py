@@ -120,3 +120,74 @@ def ftz_daz(on):
 def restore_csr(c):
     "Restore an MXCSR value returned by ftz_daz."
     _ftz_lib().restore_csr(c)
+
+# ── spin ramp of the chain (time-dependent notebooks) ──
+# Two-sided ramp: the chain spins rotate from ẑ (topological) to the in-plane antiferromagnet (trivial), from both ends inwards,
+# one site after the other (site k from the nearer end starts at t = step_T·k·rot_T and takes rot_T), until only the middle
+# ell_final sites are still along ẑ: the topological segment shrinks from ell to ell_final and the two Majoranas fuse.
+# S = (0, sin θ, cos θ) with θ = (−1)^ix (π/2) f, f = smoothstep(t/rot_T − step_T·k); ix is the absolute column.
+RAMP_ELL_FINAL, RAMP_STEP_T = 4, 0.1
+
+def smoothstep(t):
+    "sin²(πt/2) on [0, 1], 0 before, 1 after."
+    return 0.0 if t <= 0 else 1.0 if t >= 1 else np.sin(0.5 * np.pi * t) ** 2
+
+def ramp_duration(ell, rot_T, ell_final=RAMP_ELL_FINAL, step_T=RAMP_STEP_T):
+    "Time at which the last rotating site has finished."
+    return (((ell - ell_final) // 2 - 1) * step_T + 1) * rot_T
+
+def ramp_f(t, n, ell, rot_T, ell_final=RAMP_ELL_FINAL, step_T=RAMP_STEP_T):
+    "Rotation fraction f ∈ [0, 1] of chain site n = 0 … ell−1 at time t."
+    k = min(n, ell - 1 - n)
+    return 0.0 if k >= (ell - ell_final) // 2 else smoothstep(t / rot_T - step_T * k)
+
+def ramp_texture(t, x0, ell, rot_T, **kw):
+    "Spin texture S(ix) of the chain (first column x0) at time t."
+    def S(ix):
+        th = (-1) ** ix * np.pi / 2 * ramp_f(t, ix - x0, ell, rot_T, **kw)
+        return (0.0, np.sin(th), np.cos(th))
+    return S
+
+class Ramp:
+    """H(t) of the ramp on the 2^Lx × 2^Ly substrate: the part without exchange is built once, the exchange (y and z components on
+    the chain sites) is added at each call. Parameters P as for ham (default: the benchmark point)."""
+    def __init__(self, Lx, Ly, ell, rot_T, ell_final=RAMP_ELL_FINAL, step_T=RAMP_STEP_T, **P):
+        self.Lx, self.Ly, self.ell, self.rot_T, self.kw, self.P = Lx, Ly, ell, rot_T, dict(ell_final=ell_final, step_T=step_T), P
+        self.N = 2**(Lx + Ly)
+        self.xs, self.iy0 = chain_sites(Lx, Ly, ell)
+        self.sites = self.xs + self.iy0 * 2**Lx
+        self.J = P.get("J", 5.8)
+        self.H_base = ham(Lx, Ly, ell, S=lambda ix: (0.0, 0.0, 0.0), **P)
+        self.T = ramp_duration(ell, rot_T, **self.kw)
+
+    def S(self, t):
+        return ramp_texture(t, self.xs[0], self.ell, self.rot_T, **self.kw)
+
+    def H(self, t):
+        S = self.S(t); out = self.H_base
+        for k, sk in ((1, t0sy), (2, t0sz)):
+            v = np.zeros(self.N); v[self.sites] = [self.J * S(ix)[k] for ix in self.xs]
+            out = out + sp.kron(sp.diags(v), sk)
+        return out.tocsr()
+
+def snap_every(T, dt, n=130):
+    "Number of steps between recorded snapshots: about n snapshots over the ramp (the same rule in substrate_model.jl)."
+    return max(1, int(round(T / dt / n)))
+
+# ── particle–hole conjugation and Majorana readout (time-dependent notebooks) ──
+def phconj(psi):
+    "C ψ = τ_y σ_y ψ* in kwant's spinor (c↑, c↓, c†↓, −c†↑); C² = 1, C H C = −H (as in msh_substrate_python.ipynb, section 7)."
+    v = psi.reshape(-1, 4).conj()
+    return (v @ np.kron(sy, sy).T).reshape(-1)
+
+def majoranas(psi):
+    "Self-conjugate pair (γ₁, γ₂) = ((ψ + Cψ)/√2, i(ψ − Cψ)/√2) of a fermion mode ψ (orthogonal to Cψ)."
+    c = phconj(psi)
+    return (psi + c) / np.sqrt(2), 1j * (psi - c) / np.sqrt(2)
+
+def majorana_matrix(phi_final, psi_T):
+    """M_ij = ⟨γ_i(final pair)|γ_j(T)⟩ for the Majoranas of the final +E state φ and of the evolved ψ_f(T). Real for exact
+    self-conjugate pairs; tr(MᵀM)/2 = 1 − leak, det M = p₊ − p₋, and M is orthogonal without leak. Defined up to rotations
+    (the phases of φ and ψ_f)."""
+    gf, gt = majoranas(phi_final), majoranas(psi_T)
+    return np.array([[np.vdot(a, b) for b in gt] for a in gf])

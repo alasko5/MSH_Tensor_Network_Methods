@@ -20,15 +20,17 @@
 \code{msh\_substrate\_tn.ipynb} & Julia, TensorBinding.jl / ITensors: quantics MPO, penalized DMRG\\
 \code{msh\_substrate\_python.ipynb} & Python, SciPy / MUMPS: sparse matrix, dense and shift-invert reference\\
 \code{msh\_substrate\_scaling.ipynb} & Python: cost of the methods against system size (plots)\\
+\code{msh\_substrate\_td\_python.ipynb} & Python: the fusion ramp, dense and sparse-matrix reference evolution\\
+\code{msh\_substrate\_td\_tn.ipynb} & Julia: the fusion ramp with TDVP on the quantics MPO\\
 \code{substrate\_model.jl}, \code{substrate\_model.py} & the model and helpers the notebooks share (Julia, Python)\\
 \code{ftz.c} & C: flush-to-zero / denormals-are-zero switch for \code{mumps\_ftz}\\
 \end{tabular}}\\[1.2em]
 Repository \code{MSH\_Tensor\_Network\_Methods}, branch \code{msh-substrate}\\[0.3em]
-2 November 2026
+3 November 2026
 \end{center}
 
 \vspace{1em}
-\noindent This document explains every function and struct defined in the three notebooks and the two model files (folder \code{msh\_substrate/}): what it
+\noindent This document explains every function and struct defined in the five notebooks and the two model files (folder \code{msh\_substrate/}): what it
 computes, the method, its inputs and outputs, the numerical settings that matter, and where it is used. Numbers stated in the
 markdown of the notebooks are quoted as such; numbers from the outputs are those of the executed notebooks in the repository. Function names in
 \code{typewriter} are those of the code.
@@ -54,6 +56,9 @@ zero-mode pair and its charge difference $\Delta Q = \bra{\psi_f}\tau_z\ket{\psi
   charge-difference formula, and scans the parameters for a point where the zero modes leak into the substrate.
 \item \code{msh\_substrate\_scaling.ipynb} (Python) reads the CSV files of the other two and compares time, memory, accuracy and bond
   dimensions, and finds the crossover between the methods.
+\item \code{msh\_substrate\_td\_python.ipynb} (Python, Part IV) and \code{msh\_substrate\_td\_tn.ipynb} (Julia, Part V) evolve the fermion mode
+  through a fusion ramp of the chain spins: the sparse-matrix reference (\code{expm\_multiply}) and dense propagation against TDVP, from small
+  substrates, where TDVP is checked against the exact evolution, to $2048^2$ sites.
 \end{itemize}
 Two parameter points are used: the benchmark point $\mu = -7$, $\Delta = 2.4$, $J = 5.8$, $\ell = 12$, where the substrate is a gapped
 trivial superconductor and the zero modes stay on the chain row, and the leaking point $\Delta = 0.6$, $\mu = -3$, $J = 3$, $\ell = 64$
@@ -63,7 +68,7 @@ trivial superconductor and the zero modes stay on the chain row, and the leaking
 \begin{itemize}
 \item \emph{Benchmark point.} The bond dimensions do not grow with the system size: $\chi(H) = 7$, $\chi(K)\le38$, $\chi(\psi)\le26$ from one row
   to $2048\times2048$ sites. The TN time grows as $N^{0.14}$ (126 s at $1024^2$, 140 s at $2048^2$, 1.8 GB process memory), against
-  $N^{1.5}$ for SuperLU and MUMPS (MUMPS: 70 s at $512^2$, 1013 s and 28.6 GB at $1024^2$; SuperLU runs out of memory there) and $N^{3.07}$ for
+  $N^{1.5}$ for SuperLU and MUMPS (MUMPS: 70 s at $512^2$, 1013 s and 28.6 GB at $1024^2$; SuperLU fails there on a 32-bit size overflow) and $N^{3.07}$ for
   dense diagonalization. At this point the MUMPS factors contain subnormal numbers, which are slow on x86; with flush-to-zero /
   denormals-are-zero (\code{mumps\_ftz}) the same results take 43 s at $512^2$ and 236 s at $1024^2$. The crossover with the TN is at about
   $589^2$ sites for MUMPS out of the box and at about $786^2$ with flush-to-zero. TN errors: $\le2.5\times10^{-8}$ in $\Delta Q$ and $\le1.1\times10^{-11}$ in $E_f$.
@@ -75,6 +80,11 @@ trivial superconductor and the zero modes stay on the chain row, and the leaking
   is started from the mirror image of the first, which fixes a convergence failure at $2048^2$; and which basis of the zero-mode pair DMRG
   returns (Majoranas, $\chi\approx114$, or two-ended mixtures, $\chi\approx136$) varies with the random start, so the time of a size is uncertain
   by up to a factor 1.7.
+\item \emph{Time evolution} (Parts IV, V). TDVP reproduces the exact evolution to $1-F\le3\times10^{-10}$ where the MPS is full rank. On the fast
+  benchmark ramp its bond dimension stays at 74--126 and it is 19 times faster than the sparse reference at $2048^2$ (idle machine); on the slow ramp
+  the SVD cutoff decides the cost, and cutoff $10^{-12}$ is as accurate as $10^{-14}$ ($1-F = 5\times10^{-8}$) at 1/40 of the cost and 2.4 times
+  faster than the sparse reference at $512^2$. At the leaking point the readouts need little bond dimension ($\chi_{\max} = 128$: $1-F\approx10^{-6}$),
+  but the sparse reference stays faster up to $512^2$. TDVP needs about 2 GB at every size.
 \end{itemize}
 
 \subsection{Model and conventions}\label{sec:model}
@@ -186,10 +196,14 @@ prints. Julia: the Pauli matrices, \code{diag\_mpo}, \code{vector\_mps}, \code{d
 \code{quietly}, \code{norm\_Hψ}, \code{apply\_site}, \code{τz\_on}, \code{ΔQ\_mode}, \code{mps\_size}, \code{xqubits}, \code{Cconj}, \code{mirror\_x},
 \code{zero\_mode\_subspace}, \code{fermion\_from\_subspace} (6); \code{PC} (8). Python: the Pauli products, \code{S\_z}, \code{S\_tilt},
 \code{in\_fresh\_process} (setup); \code{shift}, \code{chain\_sites}, \code{ham} (1); \code{julia\_to\_python} (2); \code{pair\_values} (5);
-\code{PC} (8); and \code{ftz\_daz}, \code{restore\_csr} (5). The code in the files is the code the notebooks contained.
+\code{PC} (8); and \code{ftz\_daz}, \code{restore\_csr} (5). The code in the files is the code the notebooks contained. The ramp and readout
+helpers of the time-dependent notebooks are in the same files: Python \code{smoothstep}, \code{ramp\_duration}, \code{ramp\_f}, \code{ramp\_texture},
+\code{Ramp}, \code{snap\_every}, \code{phconj}, \code{majoranas}, \code{majorana\_matrix} (Part IV); Julia \code{smoothstep}, \code{ramp\_duration},
+\code{ramp\_f}, \code{ramp\_texture}, \code{ramp\_mpo}, \code{snap\_every} and the keyword \code{profile\_cutoff} of \code{msh\_substrate} (Part V).
 
 Run order (all paths relative to \code{msh\_substrate/}):
-\begin{center}\code{msh\_substrate\_tn.ipynb} $\to$ \code{msh\_substrate\_python.ipynb} $\to$ \code{msh\_substrate\_scaling.ipynb}.\end{center}
+\begin{center}\code{msh\_substrate\_tn.ipynb} $\to$ \code{msh\_substrate\_python.ipynb} $\to$ \code{msh\_substrate\_scaling.ipynb};\quad
+\code{msh\_substrate\_td\_python.ipynb} $\to$ \code{msh\_substrate\_td\_tn.ipynb}.\end{center}
 Python section 2 needs \code{data/tn\_check\_H.npz} from the TN notebook; Python section 8c needs \code{py\_mumps\_estimates.csv} from
 Python section 6; the scaling notebook only loads files. All timings are single-threaded (\code{BLAS.set\_num\_threads(1)} in Julia;
 \code{OMP\_NUM\_THREADS}, \code{MKL\_NUM\_THREADS}, \code{OPENBLAS\_NUM\_THREADS} set to 1 before NumPy is imported), except the parameter scan of
@@ -209,6 +223,15 @@ File & Written by & Content\\
 \code{py\_mumps\_estimates.csv} & Py sec.~6 & MUMPS analysis estimates, $L = 7\dots11$\\
 \code{py\_mu\_scan.csv} & Py sec.~8a & 1305 points of the $\mu\times J\times\Delta$ scan\\
 \code{py\_candidate.csv} & Py sec.~8c & MUMPS at the second point (resumable)\\
+\code{td\_py\_runs.csv}, \code{td\_py\_dQ.csv} & TD Py sec.~5 & sparse reference at the small sizes, summary and $\Delta Q(t)$\\
+\code{td\_py\_dense.csv}, \code{td\_py\_dt.csv} & TD Py sec.~3, 4 & dense against sparse; time step\\
+\code{td\_py\_large.csv}, \code{td\_py\_large\_dQ.csv} & TD Py sec.~7 & sparse reference on $256^2$--$1024^2$ (resumable)\\
+\code{td\_py\_step2048.csv}, \code{td\_py\_step\_idle.csv} & TD Py sec.~7, 7.1 & step times at $2048^2$; idle step times\\
+\code{data/td\_py\_psi\_*.npz} & TD Py sec.~5, 7 & initial and final states (not committed)\\
+\code{td\_tn\_runs.csv}, \code{td\_tn\_dQ.csv} & TD TN sec.~2 & TDVP at the small sizes, summary and series\\
+\code{td\_tn\_large.csv}, \code{td\_tn\_large\_series.csv} & TD TN sec.~5 & TDVP on large substrates (with $1-F$), and $\Delta Q(t)$, $\chi(t)$\\
+\code{td\_tn\_step\_idle.csv} & TD TN sec.~6.1 & idle TDVP step times\\
+\code{data/td\_tn\_*.npz}, \code{.jls} & TD TN sec.~2, 5 & per-run series, summaries and final MPS (not committed)\\
 \bottomrule
 \end{tabularx}
 \end{center}
@@ -677,8 +700,12 @@ build of $H$.
   \code{eigsh}'s default (COLAMD) and makes the solve 2.3--2.5 times faster ($256^2$: 21 s to 9 s; $512^2$: 276 s to 110 s). SuperLU reports a failed
   allocation by printing to stderr and raising an empty \code{MemoryError}; \code{solve} re-raises it as
   \code{MemoryError("SuperLU: not enough memory to perform factorization")} so the status in the CSV is informative. At $1024\times1024$
-  this happens within a second with a few GB in use on a 188 GB machine (SuperLU's limits, not the machine's), and that size is recorded as
-  failed.
+  this happens within a second with a few GB in use on a 188 GB machine, and that size is recorded as failed. The cause is an integer
+  overflow in SuperLU's first memory guess, not the fill: SciPy builds SuperLU with 32-bit \code{int\_t}, and \code{zLUMemInit} sizes the factors as
+  \code{fill\_ratio}$\times\text{nnz}(H)$ with \code{fill\_ratio} $= 30$ (\code{sp\_ienv(6)}), which is $2.51\times10^9$ at $1024^2$, above $2^{31}-1$. The negative
+  size fails, SuperLU halves it until it falls below nnz$(H)$, and stops before any factorization. At $1024\times512$ (guess $1.26\times10^9$) it
+  succeeds with a measured fill (L+U) of $6.4\times10^8$ (minimum degree) or $1.3\times10^9$ (COLAMD); the extrapolated fill at $1024^2$ (about $1.5\times10^9$
+  with minimum degree) would fit in 32-bit indices. Every matrix with more than $7.2\times10^7$ nonzeros hits this limit.
 \item \code{"mumps"}: \code{mumps.Context().factor(H.tocoo(), ordering="metis")} (analysis and numerical factorization with METIS nested
   dissection), then the same \code{eigsh} with \code{ctx.solve}. Per the markdown, METIS gave the smallest factorization at $256^2$ (2.6 s, against
   3.1 s for SCOTCH and 3.2 s for AMD), and MUMPS's 64-bit indices let it factorize $1024\times1024$.
@@ -900,5 +927,363 @@ so its MUMPS times are not rerun with FTZ/DAZ. The crossover is computed as in
 section 5, here including the $2048^2$ estimate; if MUMPS is faster at every size the cell says so. Note that the TN RSS is the process peak
 including section 7, while the MUMPS RSS is per forked process.
 MUMPS/TN $= 0.00, 0.01, 0.03, 0.10, 0.91$ from $128\times64$ to $2048^2$; TN errors $\le2.6\times10^{-12}$ ($E_f$) and $\le9.0\times10^{-10}$ ($\Delta Q$); printed: no crossover up to $2048\times2048$ (MUMPS is faster at every size, with its estimate at $2048^2$), but the TN needs 2.3 GB there against $\sim$121 GB.
+
+\clearpage
+%======================================================================
+\section{Part IV --- Time-dependent Python notebook (\code{msh\_substrate\_td\_python.ipynb})}
+%======================================================================
+
+The fusion ramp of the chain evolved exactly: the reference for the TDVP notebook (Part V). The chain spins rotate from $\hat z$
+(topological) to the in-plane antiferromagnet (trivial), from both chain ends inwards, one site after the other, until only the middle
+four sites are along $\hat z$; the topological segment shrinks from $\ell$ to 4 sites and the two Majoranas are pushed together and fuse. Site
+$k$ from the nearer end starts at $t = 0.1\,k\,T_{\rm rot}$ and turns over $T_{\rm rot}$ with $f = \sin^2(\pi\tau/2)$:
+\[
+\mathbf S = (0, \sin\theta, \cos\theta),\qquad \theta = (-1)^{i_x}\tfrac\pi2 f,\qquad T = \bigl(0.1\,((\ell-4)/2-1)+1\bigr)\,T_{\rm rot}.
+\]
+\paragraph{Points, speeds and sizes.}
+\begin{center}
+\resizebox{\linewidth}{!}{\begin{tabular}{lllll}
+\toprule
+Point & fast $T_{\rm rot}$ & slow $T_{\rm rot}$ & small sizes & large sizes (section 7)\\
+\midrule
+benchmark (\code{bench}), $\ell = 12$ & 10 ($T = 13$) & 100 ($T = 130$) & $16\times4$, $32\times8$, $32\times32$ & $256^2$--$1024^2$, both speeds\\
+leaking (\code{leak}), $\ell = 64$ & 100 ($T = 390$) & 1600 ($T = 6240$) & $128\times2$, $128\times8$, $128\times32$ & $256^2$--$1024^2$, $T_{\rm rot} = 100$\\
+\bottomrule
+\end{tabular}}
+\end{center}
+\paragraph{State, time step and readouts.} The fermion mode $\psi_f$ of $H(0)$ (the $+E$ member of the zero-mode pair) is evolved with
+$i\partial_t\psi = H(t)\psi$ by the midpoint rule $\psi\leftarrow e^{-i\,\delta t\,H(t+\delta t/2)}\psi$, $\delta t = 0.1$, the rule of
+TensorBinding's \code{evolve\_with\_tdvp\_timedep}, so that the methods of both notebooks differ only in how they apply the exponential.
+Recorded: $\Delta Q(t)$ about 130 times over the ramp (\code{snap\_every}); at the end the weights $p_\pm = |\langle\phi_\pm(T)|\psi(T)\rangle|^2$ on
+the two states of the final pair (energies $\pm E_f(T)$), the \emph{leak} $1-p_+-p_-$ (weight that left the pair), and the Majorana matrix $M$
+(section 6).
+
+\paragraph{The sparse reference.} The evolution used as the reference of both time-dependent notebooks (``sparse'' in their tables) is
+SciPy's \code{expm\_multiply} on the sparse $H(t)$: a truncated Taylor series with scaling (Al-Mohy and Higham) that needs only products
+of $H$ with vectors, to double precision. A step therefore costs $\propto N$. It is not a Krylov-subspace method; the only Krylov solver of
+the two notebooks is the local one inside TDVP.
+
+Packages as in Part II, plus \code{expm\_multiply}. Results: \code{td\_py\_runs.csv}, \code{td\_py\_dQ.csv}, \code{td\_py\_dense.csv}, \code{td\_py\_dt.csv},
+\code{td\_py\_large.csv}, \code{td\_py\_large\_dQ.csv}, \code{td\_py\_step2048.csv}, \code{td\_py\_step\_idle.csv} (committed) and
+\code{data/td\_py\_psi\_*.npz} (initial and final states, read by Part V; not committed). All \code{RUN\_*} flags are \code{False} in the committed
+notebook, so a rerun only loads the CSV files.
+
+\subsection{Ramp and readout helpers (\code{substrate\_model.py})}
+
+\begin{function}{RAMP\_ELL\_FINAL, RAMP\_STEP\_T = 4, 0.1;\ smoothstep(t)}
+The number of sites that stay along $\hat z$ and the delay between neighbouring sites in units of $T_{\rm rot}$. \code{smoothstep} is
+$\sin^2(\pi t/2)$ on $[0,1]$, 0 before and 1 after: zero first derivative at both ends, so each site starts and stops smoothly.
+\end{function}
+
+\begin{function}{ramp\_duration(ell, rot\_T, ...), ramp\_f(t, n, ell, rot\_T, ...)}
+\code{ramp\_duration} is $T$ above, the time at which the last rotating site has finished. \code{ramp\_f} is the rotation fraction of chain site
+$n = 0\dots\ell-1$: with $k = \min(n, \ell-1-n)$ the distance from the nearer end, 0 for the middle sites ($k\ge(\ell-4)/2$), otherwise
+\code{smoothstep}$(t/T_{\rm rot} - 0.1k)$.
+\end{function}
+
+\begin{function}{ramp\_texture(t, x0, ell, rot\_T, **kw)}
+The texture $\mathbf S(i_x) = (0,\sin\theta,\cos\theta)$, $\theta = (-1)^{i_x}\frac\pi2\,$\code{ramp\_f}$(t, i_x-x_0, \ldots)$ of the chain whose first
+column is $x_0$, as a function of the absolute column (so the antiferromagnetic sign follows the lattice, as in Julia).
+\end{function}
+
+\begin{function}{class Ramp(Lx, Ly, ell, rot\_T, ell\_final, step\_T, **P)}
+\begin{Verbatim}
+self.H_base = ham(Lx, Ly, ell, S=lambda ix: (0.0, 0.0, 0.0), **P)
+def H(self, t):
+    S = self.S(t); out = self.H_base
+    for k, sk in ((1, t0sy), (2, t0sz)):
+        v = np.zeros(self.N); v[self.sites] = [self.J * S(ix)[k] for ix in self.xs]
+        out = out + sp.kron(sp.diags(v), sk)
+    return out.tocsr()
+\end{Verbatim}
+$H(t)$ of the ramp. The part without exchange is built once (\code{ham} with a zero texture); each call adds only the $y$ and $z$
+exchange on the chain sites (the $x$ component is zero along the ramp). Attributes \code{T}, \code{N}, \code{xs}, \code{iy0}, \code{sites} (flat
+indices $i_x + i_yN_x$), \code{J}; parameters \code{P} as for \code{ham}, default the benchmark point. At $2048^2$ a call takes 2.4 s.
+\end{function}
+
+\begin{function}{snap\_every(T, dt, n=130)}
+Steps between recorded snapshots, $\max(1, \mathrm{round}(T/\delta t/n))$: about 130 snapshots per ramp. The same rule is in
+\code{substrate\_model.jl}, so both notebooks record $\Delta Q$ at the same times.
+\end{function}
+
+\begin{function}{phconj(psi), majoranas(psi)}
+\code{phconj} is $C\psi = \tau_y\sigma_y\psi^*$ in kwant's spinor ($C^2 = 1$, $CHC = -H$), as in Part II, section 7. \code{majoranas} returns the
+self-conjugate pair $\gamma_1 = (\psi+C\psi)/\sqrt2$, $\gamma_2 = i(\psi-C\psi)/\sqrt2$ of a fermion mode $\psi$ orthogonal to $C\psi$.
+\end{function}
+
+\begin{function}{majorana\_matrix(phi\_final, psi\_T)}
+$M_{ij} = \langle\gamma_i^{\rm fin}|\gamma_j(T)\rangle$ for the Majoranas of the final $+E$ state $\phi$ and of the evolved $\psi_f(T)$. Since the
+evolution commutes with $C$ ($Ce^{-iH\delta t} = e^{-iH\delta t}C$ because $CHC = -H$), the evolved Majoranas follow from $\psi_f(T)$ alone, without a
+second evolved mode. $M$ is real; $\tfrac12\operatorname{tr}M^TM = 1-\text{leak}$ (the projection on the final pair commutes with $C$); $\det M =
+p_+-p_-$, $+1$ if the mode ends in the $+E$ state and $-1$ if in the $-E$ state. Without leak $M$ is orthogonal; with leak $M^TM$ is in general not
+a multiple of the identity (the two Majoranas leak differently). $M$ is defined up to rotations (the phases of $\phi$ and $\psi_f$).
+\end{function}
+
+\subsection{Setup}
+
+Thread variables set to 1 before NumPy; \code{DT = 0.1}; \code{NPROC = 8} runs in parallel, one thread each; \code{POINTS} holds, per point,
+the parameters \code{P} (\code{\{\}} or \code{PC}), $\ell$, the two speeds and the three small sizes.
+
+\begin{function}{ramp(point, Lx, Ly, rot\_T), pair(H, k=4), dQ\_of(psi)}
+\code{ramp} builds the \code{Ramp} of a point. \code{pair} returns the $k$ eigenpairs closest to zero by shift-invert \code{eigsh} (SciPy's default
+factorization), sorted by $|E|$. \code{dQ\_of} is $\langle\psi|\tau_z|\psi\rangle$: particle ($c_\uparrow,c_\downarrow$) minus hole weight.
+\end{function}
+
+\begin{function}{initial\_state(R), final\_readout(R, psi)}
+\code{initial\_state} returns $E_f(0)$ and $\psi_f$, the $+E$ member of the pair of $H(0)$. \code{final\_readout} diagonalizes $H(T)$ the same way and
+returns $E_f(T)$, $\Delta Q$ of the final $+E$ state, $p_+$, $p_-$ and the leak.
+\end{function}
+
+\begin{function}{evolve(R, psi, dt=DT, method="sparse", t\_end=None)}
+\begin{Verbatim}
+Hm = R.H((s + 0.5) * dt)
+if method == "sparse":
+    psi = expm_multiply(-1j * dt * Hm, psi)
+else:
+    E, V = la.eigh(Hm.toarray())
+    psi = V @ (np.exp(-1j * dt * E) * (V.conj().T @ psi))
+\end{Verbatim}
+The midpoint rule from 0 to $t_{\rm end}$ (default $T$), by the sparse reference or by the eigendecomposition of the dense $H$ (exact for the
+rule). $\Delta Q$ is recorded every \code{snap\_every} steps and at the end. Returns $\psi$, the recorded times, $\Delta Q$ there and the wall time.
+\end{function}
+
+\begin{function}{write\_csv(path, rows, cols), read\_csv(path)}
+Write a list of dicts as CSV; read a CSV into a NumPy structured array (\code{genfromtxt} with names, \code{ndmin=1}).
+\end{function}
+
+\subsection{Section 2: the ramp and the spectrum along it}
+
+\begin{function}{track(point, Lx, Ly, n=301)}
+The six levels closest to zero at 301 times of the ramp with $T_{\rm rot} = 1$ (the spectrum depends on $t/T_{\rm rot}$ only), and the energy of the
+pair state followed continuously from $\psi_f$: at each time the pair eigenvector with the larger overlap with the previous one.
+\end{function}
+Run for $32\times8$ (benchmark) and $128\times8$ (leaking) in two processes. Figure: the rotation fraction of every site against time
+($\ell = 64$), and the levels with the followed state (symlog scale). The splitting of the pair changes sign as the segment shortens, and an
+adiabatic evolution follows these crossings (protected by the parity of the pair), so $\psi_f$ can end in either member of the final pair.
+Printed: benchmark minimum gap 0.5068 at $t/T_{\rm rot} = 1.30$, 3 sign changes, the followed state ends in the $-E$ member; leaking minimum
+gap 0.1147 at $t/T_{\rm rot} = 2.99$, 17 sign changes, $-E$ member.
+
+\subsection{Section 3: exact (dense) against the sparse reference}
+
+\begin{function}{dense\_vs\_sparse(point, Lx, Ly, rot, t\_end)}
+Both methods of \code{evolve} from the same $\psi_f$; returns $\|\psi_{\rm sparse}-\psi_{\rm dense}\|$, $\max|\Delta Q_{\rm sparse}-\Delta Q_{\rm dense}|$,
+$\Delta Q(t_{\rm end})$ and both wall times.
+\end{function}
+Cases: benchmark $16\times4$ and $32\times8$ at both speeds, leaking $128\times2$ ($D = 1024$) at $T_{\rm rot} = 100$, and at $T_{\rm rot} = 1600$ up to $t = 390$
+(the full ramp would take 7 hours dense); results in \code{td\_py\_dense.csv} (column \code{s\_sparse}). Agreement $\le4.6\times10^{-12}$ in $\psi$ and
+$\le1.2\times10^{-12}$ in $\Delta Q$; the sparse reference is 10 times faster at $D = 256$ and up to 400 times at $D = 1024$.
+
+\subsection{Section 4: time step}
+
+\begin{function}{dt\_check(point, Lx, Ly, rot)}
+The sparse reference at $\delta t = 0.1, 0.05, 0.025$ on the smallest size of each point, both speeds; differences of $\psi(T)$ from
+$\delta t = 0.025$ and the readouts. Results in \code{td\_py\_dt.csv}.
+\end{function}
+The rule is second order (the error drops about 5 times per halving). At $\delta t = 0.1$ the error of $\psi(T)$ is $3.0\times10^{-4}$ on the fast
+benchmark ramp and $\le8.6\times10^{-6}$ otherwise; the readouts move by at most $5\times10^{-5}$ ($\Delta Q(T)$) and $1.2\times10^{-4}$ (leak). Every method of
+both notebooks shares this error.
+
+\subsection{Section 5: the sparse reference at the small sizes}
+
+\begin{function}{sparse\_run(point, Lx, Ly, rot), psi\_file(point, Lx, Ly, rot)}
+One full ramp: $\psi_f$, \code{evolve}, \code{final\_readout}; saves $\psi(0)$, $\psi(T)$, the times and $\Delta Q$ to
+\code{data/td\_py\_psi\_<point>\_<Lx>\_<Ly>\_rot<T\_rot>.npz} (\code{psi\_file}). Returns the summary row and the $\Delta Q$ series.
+\end{function}
+All sizes of both points at both speeds in 8 processes; rows already in \code{td\_py\_runs.csv} are skipped, the series go to
+\code{td\_py\_dQ.csv}. Results: at the benchmark point $T_{\rm rot} = 10$ leaves 53\,\% of the weight outside the final pair and $T_{\rm rot} = 100$ only
+$4.7\times10^{-7}$; at the leaking point $T_{\rm rot} = 100$ leaks 91--94\,\% and $T_{\rm rot} = 1600$ $1.1$--$1.4\times10^{-5}$ on $128\times2$ and
+$128\times8$ but $2.0\times10^{-3}$ on $128\times32$, where the mode spreads into rows the smaller substrates lack. In every slow run $\psi_f$ ends in the
+$-E$ member ($p_-\ge0.998$), so the leak and $p_\pm$, not $\Delta Q(T)$ against the $+E$ state, are the meaningful readouts. 0.8--6.3 ms per step.
+
+\subsection{Section 6: Majorana readout}
+
+For every run of section 5, \code{majorana\_matrix} of the final $+E$ state and $\psi(T)$, with $\max|\operatorname{Im}M|$,
+$|\tfrac12\operatorname{tr}M^TM-(1-\text{leak})|$, $\|M^TM/(1-\text{leak})-1\|$ and $|\det M-(p_+-p_-)|$. Printed: $M$ real to round-off, both identities to
+$\le2\times10^{-15}$; $M^TM/(1-\text{leak})$ differs from the identity by up to 0.37 on the fast leaking ramp.
+
+\subsection{Section 7: the sparse reference on large substrates}
+
+Benchmark point on $256^2$, $512^2$, $1024^2$ at both speeds and leaking point on the same sizes at $T_{\rm rot} = 100$ (\code{LARGE\_CASES}, longest
+first). Three differences from section 5: the pair comes from MUMPS (SuperLU fails at $1024^2$, Part II, section 5); every run switches on
+FTZ/DAZ (\code{ftz\_daz}), which removes the subnormal slowdown and changes nothing else; at most three runs go at once
+(\code{Pool(3, maxtasksperchild=1)}: each run in a fresh process, whose peak memory is recorded), since a $1024^2$ factorization needs 28.6 GB.
+
+\begin{function}{pair\_mumps(H, k=4)}
+As \code{pair}, with a MUMPS (METIS) factorization passed to \code{eigsh} as \code{OPinv}.
+\end{function}
+
+\begin{function}{sparse\_large(point, Lx, Ly, rot), sparse\_large\_case(c), append\_rows(path, cols, rows)}
+\code{sparse\_large} is \code{sparse\_run} with \code{pair\_mumps} and FTZ/DAZ, also returning the pair times, the peak RSS and $\det M$;
+\code{sparse\_large\_case} unpacks a case tuple (a named function, since \code{Pool} cannot pickle a lambda); \code{append\_rows} appends rows to a CSV,
+writing the header if the file is new, so every finished run is kept (resumable).
+\end{function}
+Results (\code{td\_py\_large.csv}, \code{td\_py\_large\_dQ.csv}): the readouts do not change with the substrate from $256^2$ to $1024^2$ (to
+$10^{-9}$): benchmark leak 0.531676 and $4.73\times10^{-7}$, $\det M = -0.4683$ and $-1.0000$; leaking leak 0.908174, $\det M = -0.0918$. With up to about
+18 runs sharing the machine a step took 0.46--0.58 s ($256^2$), 2.1--3.4 s ($512^2$), 7.7--11.4 s ($1024^2$); peak memory 1.6, 6.0 and 26.7 GB, set by
+the MUMPS factorization for the pair.
+
+\begin{function}{step\_time(point, L, nst=10)}
+Wall time per step at $2^L\times2^L$ in the middle of the fast ramp, from 10 steps on a random normalized vector, with the time of building
+$H(t)$ separately (a full run at $2048^2$ would need a 121 GB factorization for the pair). Printed (\code{td\_py\_step2048.csv}): 22.2 s
+(benchmark) and 20.3 s (leaking) per step, 2.4 s of it building $H(t)$, peak 21.1 GB.
+\end{function}
+
+\subsubsection*{7.1 Step times on the idle machine}
+
+\begin{function}{idle\_step(point, L, rot, nst=6)}
+The median of 5 steps (after a first one) of \code{R.H} plus \code{expm\_multiply} at mid-ramp, on the final state of section 7 where it exists (a
+random state at $2048^2$), FTZ/DAZ on, one size after the other in fresh processes (\code{td\_py\_step\_idle.csv}).
+\end{function}
+The shared-machine times above are 2.3--4.7 times the idle ones: 0.18 s ($256^2$), 0.77 s ($512^2$), 3.7 s ($1024^2$) and 15 s ($2048^2$) at the benchmark
+point, 0.16, 0.73, 3.4 and 14.4 s at the leaking point, about $\propto N$. These are the times TDVP is compared with in Part V, section 6.1.
+
+\subsection{Section 8: summary}
+The markdown summarizes the notebook: the sparse reference is exact for the midpoint rule (section 3); the time step is the leading error
+(section 4); the leak depends strongly on the speed (section 5); the evolution follows the sign changes of the pair, so the final member is the
+$-E$ one (section 2); the readouts are converged in the substrate size at the benchmark point on the small sizes and at both points on the large
+ones (sections 5 and 7); the Majorana identities hold to round-off (section 6); and the cost and memory of the sparse reference on large
+substrates (section 7).
+
+\clearpage
+%======================================================================
+\section{Part V --- Time-dependent TN notebook (\code{msh\_substrate\_td\_tn.ipynb})}
+%======================================================================
+
+The same ramp with TDVP on the quantics MPO, against the sparse reference of Part IV. $\psi_f$ of $H(0)$ comes from the zero-mode pipeline
+(Part I, section 6); then TensorBinding's \code{evolve\_with\_tdvp\_timedep}: two-site TDVP with $H$ at the midpoint of each step,
+$\delta t = 0.1$, \code{reverse\_step = true}, local Krylov tolerance $10^{-12}$ and dimension 30, the state renormalized after each step, one
+sweep per step and $H(t)$ rebuilt at every step. At the end the MPS is contracted to a dense vector in the Python basis (where the size allows) and
+compared with the sparse final state: $1-F = 1-|\langle\psi_{\rm sparse}|\psi_{\rm TDVP}\rangle|^2$. Packages as in Part I plus \code{Distributed},
+\code{Serialization}, \code{Plots}. All run flags are \code{false} in the committed notebook (collect only). Needs \code{data/td\_py\_psi\_*.npz} from Part IV.
+
+\paragraph{Truncation.} Two settings: the SVD \code{cutoff} (discarded squared weight per SVD) and the cap \code{maxdim} $=\chi_{\max}$. At the small
+sizes the MPS has $L_x+L_y+2\le14$ sites, so its bond dimension is at most $2^{\lfloor(L_x+L_y+2)/2\rfloor}\le128$ and only the cutoff acts; on the large
+substrates (18 to 24 sites) both act. TDVP time per step grows as about $n\chi^3$ ($n$ sites), against $N$ for the sparse reference.
+
+\subsection{Ramp MPO (\code{substrate\_model.jl})}
+
+\begin{function}{smoothstep, ramp\_duration, ramp\_f, ramp\_texture(t, g, rot\_T), snap\_every}
+The same functions as in \code{substrate\_model.py} (Part IV); \code{ramp\_texture} takes the \code{Substrate} and returns the texture
+$i_x\mapsto(0,\sin\theta,\cos\theta)$ for \code{msh\_substrate}.
+\end{function}
+
+\begin{function}{ramp\_mpo(t, g, rot\_T, sites; P...)}
+\code{first(msh\_substrate(g, ramp\_texture(t, g, rot\_T); sites, profile\_cutoff=1e-20, P...))}: the BdG MPO at time $t$ on the existing site
+indices. \code{msh\_substrate} has the keyword \code{profile\_cutoff} (default \code{1e-14}, unchanged results for the static textures): the
+truncation cutoff of the exchange profiles along $x$. A generic texture needs \code{1e-20}; with \code{1e-14} the rotating texture is off by up to
+$5\times10^{-7}$. With it, \code{ramp\_mpo} agrees with \code{Ramp.H} to $9\times10^{-12}$. $\chi(H(t)) = 9$ (benchmark) and 13 (leaking); a build takes
+0.03 s at every size (at most 10\,\% of a TDVP step, so it is not optimized).
+\end{function}
+
+\subsection{Section 1: setup}
+
+\code{NPROC = 8} worker processes (one thread each), every worker includes \code{substrate\_model.jl}; \code{DT = 0.1}, \code{DATA\_DIR},
+\code{POINTS} (parameters and $\ell$ per point).
+
+\begin{function}{py\_vector(ψ, sites, N)}
+\begin{Verbatim}
+v = vec(Array(ITensors.@disable_warn_order(prod(ψ)), reverse(sites)...))
+w[4m+1] = v[m+1]; w[4m+2] = v[N+m+1]; w[4m+3] = v[3N+m+1]; w[4m+4] = -v[2N+m+1]
+\end{Verbatim}
+The dense vector of an MPS in the Python basis $4n+c$ with the spinor $(c_\uparrow, c_\downarrow, c^\dagger_\downarrow, -c^\dagger_\uparrow)$
+(the map of \code{julia\_to\_python}). Contracts the whole MPS, so it is used only where the dense vector fits (up to $1024^2$).
+\end{function}
+
+\begin{function}{case\_name(point, Lx, Ly, rot, maxdim, cutoff)}
+The file tag \code{<point>\_<Lx>\_<Ly>\_rot<T\_rot>\_m<maxdim>\_c<cutoff>}.
+\end{function}
+
+\begin{function}{run\_case(point, Lx, Ly, rot; maxdim=256, cutoff=1e-14)}
+\begin{Verbatim}
+ψ = last(TB.evolve_with_tdvp_timedep(t -> ramp_mpo(t0 + t, g, rot, sites; P...), ψ, k, DT; maxdim, cutoff,
+                                     tol=1e-12, krylovdim=30, reverse_step=true))
+\end{Verbatim}
+One small-size run: $\psi_f$ from DMRG, TDVP in chunks of \code{snap\_every} steps (the closure shifts the time by the start of the chunk),
+$\Delta Q$ and $\chi$ after each chunk; then the comparison with the sparse run of the same case: $1-F$ at $t = 0$ (DMRG against \code{eigsh}) and at $T$,
+and $\max|\Delta Q_{\rm TDVP}-\Delta Q_{\rm sparse}|$ over the snapshots. Writes \code{data/td\_tn\_<case>.npz}.
+\end{function}
+
+\subsection{Section 2: the runs}
+Two sets, longest first on the workers (\code{pmap}): the cutoff scan at the leaking point, $128\times8$, $T_{\rm rot} = 100$ (cutoff $10^{-10}$,
+$10^{-12}$, $10^{-14}$, $10^{-20}$ with \code{maxdim} = 256, and \code{maxdim} = 64 with $10^{-20}$), and every small case of Part IV with \code{maxdim} = 256,
+cutoff $10^{-14}$ (16 cases). Cases with an \code{npz} file are not run again. Collected into \code{td\_tn\_runs.csv} and \code{td\_tn\_dQ.csv}
+(committed). The longest case, $128\times32$ at $T_{\rm rot} = 1600$ (62\,400 steps), takes about half a day.
+
+\subsection{Section 3: SVD cutoff}
+$1-F(T)$ at $128\times8$: $3.0\times10^{-7}$ ($10^{-10}$), $2.6\times10^{-9}$ ($10^{-12}$), $2.4\times10^{-11}$ ($10^{-14}$), $1.0\times10^{-11}$ ($10^{-20}$, either
+\code{maxdim}); the $\Delta Q$ error from $3.1\times10^{-5}$ to $3.4\times10^{-7}$; about 1000 s per run.
+
+\subsection{Section 4: TDVP against the exact evolution}
+A table per small case (cutoff $10^{-14}$): $\chi$ of $\psi_f(0)$, the largest over the run and the full-rank bound, $1-F$ at 0 and $T$, the largest
+$\Delta Q$ difference, $\Delta Q(T)$, and the TDVP and sparse times per step (both with several runs sharing the machine); figure of
+$|\Delta Q_{\rm TDVP}-\Delta Q_{\rm exact}|$ and $\chi(t)$. $1-F(T)\le3.2\times10^{-10}$, $\Delta Q$ error $\le6.7\times10^{-6}$; TDVP 60--190 times slower per step.
+
+\subsection{Section 5: TDVP on large substrates}
+
+\begin{function}{mps\_majoranas(ψ; cutoff=1e-14)}
+$\bigl((\psi+C\psi)/\sqrt2,\ (i\psi-iC\psi)/\sqrt2\bigr)$ with \code{Cconj}, the convention of \code{majoranas} in Python. (The pipeline's
+\code{fermion\_from\_subspace} uses $\gamma_2 = -i(\psi-C\psi)/\sqrt2$, which would flip the sign of $\det M$, so both pairs of $M$ are built here.)
+\end{function}
+
+\begin{function}{run\_large(point, L, rot; maxdim=256, cutoff=1e-14, progress=false)}
+\code{run\_case} on $2^L\times2^L$ without the dense comparison. After the ramp: the final pair from the zero-mode pipeline on $H(T)$,
+$p_+ = |\langle\psi_f^{\rm fin}|\psi\rangle|^2$, $p_- = |\langle C\psi_f^{\rm fin}|\psi\rangle|^2$, the leak, and $M$ from \code{mps\_majoranas} of both.
+Writes \code{data/td\_tn\_large\_<case>.npz} (\code{ts}, \code{dQ}, \code{chi}, \code{t\_wall}, and the 18-entry \code{summary}: $T$, $\chi_0$, $\chi_{\max}$
+including the initial state, DMRG and TDVP times, s/step, $E_f(0)$, $\Delta Q(0)$, $\Delta Q(T)$, final DMRG time, $E_f(T)$, gap, $p_+$, $p_-$, leak,
+$\det M$, $\max|\operatorname{Im}M|$, $\Delta Q_+(T)$) and \code{.jls} (final MPS and sites). \code{progress} prints each snapshot.
+\end{function}
+
+\begin{function}{large\_infidelity(point, L, rot, name)}
+$1-F$ of a finished run against the sparse final state (\code{py\_vector} of the deserialized MPS), NaN without a sparse state.
+\end{function}
+
+\paragraph{Runs and collection.} \code{LARGE\_JOBS}: benchmark $L = 8\dots11$ at both speeds ($\chi_{\max} = 256$, cutoff $10^{-14}$); leaking $L = 8, 9$ with
+$\chi_{\max} = 64$ and 128 ($10^{-14}$); the cutoff scans (benchmark $512^2$, $\chi_{\max} = 512$, and leaking $256^2$, $\chi_{\max} = 256$, cutoff
+$10^{-6}\dots10^{-12}$), all $T_{\rm rot} = 100$ except the fast benchmark runs. The runs took up to 16 hours and were made outside the notebook with the same
+code (one worker each); leaking runs with $\chi_{\max} = 256$ at $10^{-14}$ were stopped without a result. \code{large\_name}, \code{large\_npz} give the file
+names. The collection computes $1-F$ once per run on the workers (names passed from the master, where \code{large\_name} is defined) and keeps it in
+\code{td\_tn\_large.csv} (one row per run, with $\chi_0$ and $\chi_{\rm run}$, the largest $\chi$ over $t>0$); \code{td\_tn\_large\_series.csv} holds
+$\Delta Q(t)$ and $\chi(t)$.
+
+\begin{function}{sparse\_large(pt, L, rot)}
+(Section 5.1, Julia) The sparse row of Part IV for a case: (s/step, leak, $\det M$), at $2048^2$ the step time of \code{td\_py\_step2048.csv}.
+\end{function}
+Section 5.1 tabulates cost and accuracy at cutoff $10^{-14}$. Fast benchmark ramp: $\chi_{\rm run}$ 74--126, leak and $\det M$ equal to the sparse ones,
+$1-F = 2.5$--$3.9\times10^{-7}$, independent of the cutoff (the TDVP projection error). Slow benchmark ramp: $\chi$ reaches the cap of 256 (200 at
+$2048^2$), $1-F\le1.8\times10^{-7}$. Leaking: $\chi_{\max} = 64$ gives leak 0.9076 and $\det M = -0.0924$ (sparse 0.9082, $-0.0918$) at $1-F = 2.3\times10^{-3}$ to
+$9.9\times10^{-3}$; $\chi_{\max} = 128$ gives $1-F = 1.2\times10^{-6}$ at both sizes.
+
+\subsection{Section 6: cutoff and bond-dimension cap on large substrates}
+Tables per point of the cutoff scan against the sparse reference, and a figure: $\chi(t)$ of the benchmark scan, $\chi(t)$ of the leaking runs, and the
+time per step against $N$. Benchmark $512^2$: cutoff $10^{-12}$ gives $\chi_{\rm run} = 48$, $1-F = 5.0\times10^{-8}$ and leak $5.1\times10^{-7}$ (sparse
+$4.73\times10^{-7}$), as accurate as $10^{-14}$, which runs into the cap of 256 in mid-ramp; $10^{-10}$ gives $4.0\times10^{-7}$, $10^{-8}$ and $10^{-6}$ corrupt
+the state ($3.4\times10^{-4}$, $5.3\times10^{-3}$). Leaking $256^2$: every cutoff reproduces the leak and $\det M$ to $\sim10^{-3}$; $1-F = 2.1\times10^{-3}$,
+$3.3\times10^{-5}$, $1.8\times10^{-6}$, $9.5\times10^{-7}$ at $10^{-6}$, $10^{-8}$, $10^{-10}$, $10^{-12}$ (the last at the cap of 256 from $t\approx63$, 2--3 times
+the cost of the cap of 128 for the same accuracy). The default cutoff from these results is $10^{-12}$, with a cap of about 128 for leaky
+runs.
+
+\subsubsection*{6.1 Step times on the idle machine}
+
+\begin{function}{sparse\_idle(pt, L, rot), shared\_tdvp(pt, L, rot, m, c)}
+The idle sparse step of Part IV, section 7.1 (a missing speed takes the other one: the step cost does not depend on $T_{\rm rot}$), and the shared
+TDVP step of \code{td\_tn\_large.csv}.
+\end{function}
+With \code{RUN\_IDLE}, one TDVP step (with the $H(t)$ rebuild) at mid-ramp from the final state of each run, median of 3 after a first one
+(\code{td\_tn\_step\_idle.csv}); the time depends on $\chi$ of that state, so for the slow benchmark runs at $10^{-14}$ (at the cap) it bounds the average
+step from above. Sharing the machine had slowed TDVP 1.6--4.2 times (the sparse reference 2.3--4.7 times). Idle: fast benchmark ramp TDVP 1.92, 0.56, 0.74, 0.79 s against sparse 0.18, 0.77,
+3.7, 15 s from $256^2$ to $2048^2$ (11 times slower, then 1.4, 5 and 19 times faster); slow ramp at $10^{-12}$, $512^2$: 0.32 s against 0.78 s; leaking
+$512^2$: 1.6 s ($\chi_{\max} = 64$) and 7.2 s (128) against 0.73 s.
+
+\subsection{Section 7: summary}
+The markdown summarizes: TDVP is exact where the MPS is full rank; on the fast benchmark ramp it is faster than the sparse reference from
+$512^2$ (19 times at $2048^2$); on the slow ramp the cutoff decides the cost, and $10^{-12}$ is the default; at the leaking point the readouts need little
+bond dimension, but the sparse reference is faster up to $512^2$ (crossings extrapolated near $1024^2$ for $\chi_{\max} = 64$ and $2048^2$ for 128); TDVP needs
+about 2 GB at every size, the sparse reference the MUMPS factorization for the pair (26.7 GB at $1024^2$). Not covered: the slow leaking ramp on the
+large substrates.
+
+\paragraph{Other integrators (outside the notebooks).} Space-time quantics (the whole ramp as one Crank--Nicolson linear system with 7 extra time
+qubits, solved by GMRES sweeps) took 1820 s and 3.0 GB for $1-F = 1.5\times10^{-5}$ on the fast benchmark ramp at $32\times8$, against 10 s and 1.8 GB for
+$1.0\times10^{-7}$ with TDVP; fourth-order commutator-free Magnus steps on the sparse reference are 10--100 times more accurate at equal cost but break
+down from $\delta t\approx0.4$, and the midpoint time-step error is already below the TDVP projection and truncation errors. Neither is used.
 
 \end{document}
