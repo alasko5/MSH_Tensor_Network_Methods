@@ -1,0 +1,12 @@
+point,L,rot_T,state,s_per_step,rss_MB
+bench,8,10.0,psiT,0.1781,426
+bench,8,100.0,psiT,0.1782,425
+bench,9,10.0,psiT,0.7716,1387
+bench,9,100.0,psiT,0.7763,1386
+bench,10,10.0,psiT,3.6623,5317
+bench,10,100.0,psiT,3.6685,5317
+bench,11,100.0,random,14.9687,21025
+leak,8,100.0,psiT,0.1614,418
+leak,9,100.0,psiT,0.7291,1392
+leak,10,100.0,psiT,3.3564,5321
+leak,11,100.0,random,14.3959,21025
