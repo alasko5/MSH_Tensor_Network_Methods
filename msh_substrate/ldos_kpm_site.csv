@@ -1,0 +1,6 @@
+point,Nx,method,cutoff,Ncheb,secs_per_site,max_chi,rss_MB,ldos_rel_err
+bench,256,TN,1e-10,512,304,171,1617,
+bench,256,sparse,,512,11.8,,281,
+bench,256,TN,1e-8,512,262,151,1536,7.2e-05
+bench,1024,TN,1e-10,512,382,175,1662,4.5e-06
+bench,1024,sparse,,512,219.3,,3525,

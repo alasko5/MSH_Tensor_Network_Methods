@@ -19,6 +19,8 @@ Python/kwant notebooks.
 | `msh_substrate/msh_substrate_python.ipynb` | Python | Dense and sparse reference for the substrate: dense `eigh`, and shift-invert Lanczos with SuperLU and with MUMPS; MUMPS memory and flop estimates; mask method vs single-mode charge difference; the μ × J × Δ scan that picks the second parameter point. |
 | `msh_substrate/msh_substrate_scaling.ipynb` | Python | Cost of the tensor network against dense and sparse methods with system size: time, memory, accuracy, bond dimensions, fitted scaling and the crossover, at both parameter points. |
 | `msh_substrate/msh_substrate_td_python.ipynb` | Python | Fusion ramp of the chain spins on the substrate, exact and sparse-matrix reference evolution (`expm_multiply`, midpoint rule): dense check, time step, leak and final-pair weights, Majorana matrix, and the cost of the sparse reference from 16 × 4 to 2048 × 2048 sites (MUMPS for the pairs). |
+| `msh_substrate/msh_substrate_ldos_python.ipynb` | Python | LDOS of the chain on the substrate, dense and sparse reference: zero-bias LDOS from the zero modes, energy-resolved LDOS from dense diagonalization (small sizes) and from all subgap states by MUMPS shift-invert (256² to 1024²), per-site Chebyshev moments, and the figures comparing TN and sparse. |
+| `msh_substrate/msh_substrate_ldos_tn.ipynb` | Julia | LDOS with tensor networks: zero-bias cuts read off the TN zero mode, the bond dimension of the Chebyshev MPOs (whole-map KPM), per-site KPM with Chebyshev MPSs, and all subgap levels by penalized DMRG on (H − σ)² + η², 256² to 2048². |
 | `msh_substrate/msh_substrate_td_tn.ipynb` | Julia | The same ramp with two-site TDVP on the quantics MPO: against the exact evolution at small sizes, then 256 × 256 to 2048 × 2048 sites with SVD-cutoff and bond-dimension-cap scans, fidelity against the sparse reference and idle-machine step times. |
 | `kitaev_charge_difference.ipynb` | Julia | Kitaev chain: fermion mode from the DMRG Majorana doublet, KPM LDOS, McWeeny bulk projector with ϵF = −(E_mode + E_gap)/2, ΔQ versus topological length, and a time-dependent smoothstep ramp that fuses the Majoranas (TDVP, with TDVP and McWeeny bulk densities). |
 
@@ -50,6 +52,8 @@ Committed CSVs (small results that other notebooks read):
 | `msh_substrate/py_zero_modes.csv`, `py_mumps_estimates.csv`, `py_candidate.csv`, `py_mu_scan.csv` | `msh_substrate_python.ipynb` (sections 5, 6, 8) | `msh_substrate_scaling.ipynb` (all but the scan) |
 | `msh_substrate/td_py_runs.csv`, `td_py_dQ.csv`, `td_py_dense.csv`, `td_py_dt.csv`, `td_py_large.csv`, `td_py_large_dQ.csv`, `td_py_step2048.csv`, `td_py_step_idle.csv` | `msh_substrate_td_python.ipynb` | itself, `msh_substrate_td_tn.ipynb` |
 | `msh_substrate/td_tn_runs.csv`, `td_tn_dQ.csv`, `td_tn_large.csv`, `td_tn_large_series.csv`, `td_tn_step_idle.csv` | `msh_substrate_td_tn.ipynb` | itself |
+| `msh_substrate/ldos_py_zerobias.csv`, `ldos_py_dense.csv`, `ldos_py_subgap.csv` | `msh_substrate_ldos_python.ipynb` | itself |
+| `msh_substrate/ldos_tn_zerobias.csv`, `ldos_tn_chi_Tn.csv`, `ldos_tn_levels.csv`, `ldos_kpm_site.csv` | `msh_substrate_ldos_tn.ipynb` (and the sparse rows of `ldos_kpm_site.csv` from the Python notebook) | both LDOS notebooks |
 
 Also committed, so that the two compare notebooks run from a fresh clone without rerunning anything:
 
@@ -103,6 +107,10 @@ Other caches and large outputs (`*.jls`, other `*.npz`, `*.npy`, `*.h5`, the fig
    regenerate, run `msh_substrate_td_python.ipynb` first (its saved states in `msh_substrate/data/` are the reference the TN notebook
    compares with; the large sparse runs take hours and up to 30 GB each), then `msh_substrate_td_tn.ipynb` with its run flags on (the
    small sizes take about half a day on 8 workers; the large-substrate runs were made one per process and take up to 16 hours each).
+7. **Substrate LDOS** (`msh_substrate/`). Both notebooks run in about a minute on the committed CSVs, but their figures read the cuts and
+   levels in `msh_substrate/data/ldos/`, which are not committed. To regenerate: `msh_substrate_ldos_python.ipynb` sections 2–5 (section 2
+   needs the zero modes of the time-dependent Python notebook; the 1024² subgap runs need up to 46 GB), then `msh_substrate_ldos_tn.ipynb`
+   (the subgap levels take 20 min to 2.3 h per size), then the Python notebook's section 6.
 
 ## Conventions
 

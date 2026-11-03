@@ -211,3 +211,94 @@ ramp_texture(t, g::Substrate, rot_T; kw...) =
 ramp_mpo(t, g::Substrate, rot_T, sites; P...) = first(msh_substrate(g, ramp_texture(t, g, rot_T); sites, profile_cutoff=1e-20, P...))
 "Number of steps between recorded snapshots: about n snapshots over the ramp (the same rule in substrate_model.py)."
 snap_every(T, dt; n=130) = max(1, round(Int, T / dt / n))
+
+# ── LDOS (msh_substrate_ldos_tn.ipynb) ──
+bits_of(v, n) = [(v >> (n - k)) & 1 for k in 1:n]
+"Contract the MPS ψ with basis states on the fixed qubits (Dict site index => bit); a dense ITensor over the other sites."
+function project_mps(ψ, fix::Dict)
+    T = ITensor(1.0)
+    for k in eachindex(ψ)
+        t = ψ[k]; s = siteind(ψ, k)
+        haskey(fix, s) && (t = t * onehot(dag(s) => fix[s] + 1))
+        T = T * t
+    end
+    return T
+end
+"Particle and hole weight (summed over spin) of ψ on row iy at the columns ixs, as a 2 × length(ixs) array; only the row is made dense."
+function row_weights(ψ, sites, g::Substrate, iy, ixs)
+    ys, xs = sites[3:2+g.Ly], sites[3+g.Ly:end]
+    A = Array(project_mps(ψ, Dict(zip(ys, bits_of(iy, g.Ly)))), sites[1], sites[2], xs...)
+    [sum(abs2, A[nb, :, (bits_of(ix, g.Lx) .+ 1)...]) for nb in 1:2, ix in ixs]
+end
+"As row_weights, on column ix at the rows iys."
+function col_weights(ψ, sites, g::Substrate, ix, iys)
+    ys, xs = sites[3:2+g.Ly], sites[3+g.Ly:end]
+    A = Array(project_mps(ψ, Dict(zip(xs, bits_of(ix, g.Lx)))), sites[1], sites[2], ys...)
+    [sum(abs2, A[nb, :, (bits_of(iy, g.Ly) .+ 1)...]) for nb in 1:2, iy in iys]
+end
+
+"""
+    subgap_levels(HB, sites, g; nlev, η=1e-2, weight=20.0, nsweeps=30, tries=3) -> NamedTuple
+
+The `nlev` lowest positive-energy levels: the zero-mode pair from the pipeline, then one penalized DMRG per level on
+K_σ = (H − σ)² + η² with σ = 0.01 above the last level found (with K = H² + η² alone DMRG stalls once the next level is far
+from zero). A DMRG state is a mixture of the ±E pair; diagonalizing H on span{ψ, Cψ} gives φ₊ at +E, and φ₊ and Cφ₊ join the
+penalty list. A state with residual ‖(H − E)φ‖ above 1e-3 is retried from a new random start. Returns E, the states φ₊, the
+residuals, χ and the time of each level.
+"""
+function subgap_levels(HB, sites, g::Substrate; nlev, η=1e-2, weight=20.0, nsweeps=30, tries=3, seed=4321)
+    Hexp(a, b) = inner(a', HB, b)
+    t0 = time()
+    z = zero_mode_subspace(HB, sites; xq = xqubits(g)); r = fermion_from_subspace(HB, sites, z.ψs, g)
+    φ1 = r.ψf / norm(r.ψf)
+    E, φs, res, ts = [real(Hexp(φ1, φ1))], MPS[φ1], [NaN], [time() - t0]
+    penal = MPS[φ1, Cconj(φ1)]
+    Random.seed!(seed)
+    for k in 2:nlev
+        local Ek, φ, rk
+        tk = @elapsed for attempt in 1:tries
+            Kσ = TB.build_K(HB, sites, E[end] + 0.01, η; cutoff_K=1e-20)
+            _, ψ = quietly() do
+                dmrg(Kσ, penal, random_mps(sites; linkdims=10); weight, nsweeps, maxdim=[10, 20, 50, 100, 200], cutoff=1e-14,
+                     noise=[1e-6, 1e-7, 1e-8, 0.0], eigsolve_krylovdim=20, eigsolve_maxiter=3, outputlevel=0)
+            end
+            ψ = ψ / norm(ψ); c = Cconj(ψ)
+            abs(inner(ψ, c)) > 0.99 && continue                  # self-conjugate: not a member of a ±E pair
+            B = [ψ, c]; S = [inner(a, b) for a in B, b in B]; Hm = [Hexp(a, b) for a in B, b in B]
+            F = eigen(Hermitian((Hm + Hm') / 2), Hermitian((S + S') / 2)); v = F.vectors[:, argmax(F.values)]
+            φ = +(v[1] * ψ, v[2] * c; cutoff=1e-14); φ = φ / norm(φ)
+            Ek = real(Hexp(φ, φ)); rk = sqrt(max(real(inner(HB, φ, HB, φ)) - Ek^2, 0.0))
+            rk < 1e-3 && break
+        end
+        push!(E, Ek); push!(φs, φ); push!(res, rk); push!(ts, tk); push!(penal, φ, Cconj(φ))
+    end
+    return (; E, φs, res, chi = maxlinkdim.(φs), t = ts)
+end
+
+"Half-bandwidth bound used as the KPM scale: 1.05 (|μ| + |J| + 4√(t² + α²) + |Δ|) on the 2D lattice."
+kpm_scale(; t=1.0, μ=-7.0, α=0.9, Δ=2.4, J=5.8) = 1.05 * (abs(μ) + abs(J) + 4 * sqrt(t^2 + α^2) + abs(Δ))
+
+"""
+    site_kpm_moments(HB, sites, g, ix, iy, scale; Ncheb, maxdim, cutoff) -> (μ, χmax)
+
+Chebyshev moments μ_n = ⟨r,c|T_n(H/scale)|r,c⟩ of the 4 components c (Nambu × spin, in the order (0,↑), (0,↓), (1,↑), (1,↓))
+of site (ix, iy), with the Chebyshev vectors as MPSs and the doubling recursion (μ_2n = 2⟨φ_n|φ_n⟩ − μ_0,
+μ_2n+1 = 2⟨φ_n+1|φ_n⟩ − μ_1), so Ncheb moments take Ncheb/2 MPO–MPS products per component. μ is Ncheb × 4.
+"""
+function site_kpm_moments(HB, sites, g::Substrate, ix, iy, scale; Ncheb, maxdim=512, cutoff=1e-10)
+    Ht = HB / scale; n = length(sites)
+    local_mps(nb, σ) = (vals = vcat(nb, σ, bits_of(iy, g.Ly), bits_of(ix, g.Lx)); l = [Index(1, "Link,l=$k") for k in 1:n-1];
+        MPS([(t = ITensor(ComplexF64.((1:dim(s)) .== v + 1), s); k > 1 && (t *= onehot(dag(l[k-1]) => 1)); k < n && (t *= onehot(l[k] => 1)); t)
+             for (k, (s, v)) in enumerate(zip(sites, vals))]))
+    μ = zeros(Ncheb, 4); χmax = 0
+    for (c, (nb, σ)) in enumerate(((0, 0), (0, 1), (1, 0), (1, 1)))
+        φ0 = local_mps(nb, σ); φm, φ = φ0, apply(Ht, φ0; maxdim, cutoff)
+        μ[1, c] = real(inner(φ0, φ0)); μ[2, c] = real(inner(φ0, φ))
+        for k in 1:(Ncheb ÷ 2 - 1)
+            φp = +(2 * apply(Ht, φ; maxdim, cutoff), -1.0 * φm; maxdim, cutoff)
+            μ[2k + 1, c] = 2 * real(inner(φ, φ)) - μ[1, c]; μ[2k + 2, c] = 2 * real(inner(φp, φ)) - μ[2, c]
+            φm, φ = φ, φp; χmax = max(χmax, maxlinkdim(φ))
+        end
+    end
+    return μ, χmax
+end

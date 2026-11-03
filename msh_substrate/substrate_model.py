@@ -191,3 +191,42 @@ def majorana_matrix(phi_final, psi_T):
     (the phases of φ and ψ_f)."""
     gf, gt = majoranas(phi_final), majoranas(psi_T)
     return np.array([[np.vdot(a, b) for b in gt] for a in gf])
+
+# ── LDOS (msh_substrate_ldos_python.ipynb) ──
+def site_weights(psi, Nx, Ny):
+    "Particle and hole weight per site (summed over spin) of a BdG vector, as two Ny × Nx arrays (site n = ix + iy·Nx)."
+    v = np.abs(psi.reshape(-1, 4))**2
+    return v[:, :2].sum(1).reshape(Ny, Nx), v[:, 2:].sum(1).reshape(Ny, Nx)
+
+def lorentz_ldos(E, w, omega, eta):
+    "Σ_k w_k L_η(ω − E_k): E (k,), w (k, positions) → (len(omega), positions), Lorentzian of half-width η."
+    return (eta / np.pi / ((omega[:, None] - E[None, :])**2 + eta**2)) @ w
+
+def jackson_ldos(mu, scale, omega):
+    "KPM spectral function from Chebyshev moments mu (Ncheb, …) with the Jackson kernel, in physical units (energies omega)."
+    N = mu.shape[0]; n = np.arange(N); q = np.pi / (N + 1)
+    g = ((N - n + 1) * np.cos(q * n) + np.sin(q * n) / np.tan(q)) / (N + 1)
+    x = omega / scale; T = np.cos(np.outer(np.arccos(x), n))
+    return (T * (g * np.where(n == 0, 1.0, 2.0))) @ mu / (np.pi * np.sqrt(1 - x**2))[:, None] / scale
+
+def sparse_site_moments(H, n, Ncheb, scale, comps=(0, 1, 3, 2)):
+    """Chebyshev moments ⟨n,c|T_m(H/scale)|n,c⟩ of site n with sparse products and the doubling recursion; comps in the order of
+    the Julia site_kpm_moments ((0,↑), (0,↓), (1,↑), (1,↓) = Python c = 0, 1, 3, 2)."""
+    Ht = (H / scale).tocsr(); mu = np.zeros((Ncheb, len(comps)))
+    for j, c in enumerate(comps):
+        p0 = np.zeros(Ht.shape[0], complex); p0[4 * n + c] = 1
+        pm, p = p0, Ht @ p0; mu[0, j] = 1; mu[1, j] = np.vdot(p0, p).real
+        for m in range(1, Ncheb // 2):
+            pp = 2 * (Ht @ p) - pm
+            mu[2 * m, j] = 2 * np.vdot(p, p).real - mu[0, j]; mu[2 * m + 1, j] = 2 * np.vdot(pp, p).real - mu[1, j]
+            pm, p = p, pp
+    return mu
+
+def mumps_eigsh(H, k):
+    "The k eigenpairs closest to zero by shift-invert eigsh with a MUMPS (METIS) factorization (ncv = 2k + 20), sorted by E."
+    import mumps
+    from scipy.sparse.linalg import eigsh, LinearOperator
+    ctx = mumps.Context(); ctx.factor(H.tocoo(), ordering="metis")
+    E, V = eigsh(H, k=k, sigma=0, which="LM", ncv=2 * k + 20, OPinv=LinearOperator(H.shape, matvec=ctx.solve, dtype=complex))
+    o = np.argsort(E)
+    return E[o], V[:, o]

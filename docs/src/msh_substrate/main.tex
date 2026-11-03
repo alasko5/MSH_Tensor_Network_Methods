@@ -22,6 +22,8 @@
 \code{msh\_substrate\_scaling.ipynb} & Python: cost of the methods against system size (plots)\\
 \code{msh\_substrate\_td\_python.ipynb} & Python: the fusion ramp, dense and sparse-matrix reference evolution\\
 \code{msh\_substrate\_td\_tn.ipynb} & Julia: the fusion ramp with TDVP on the quantics MPO\\
+\code{msh\_substrate\_ldos\_python.ipynb} & Python: LDOS, dense and sparse (MUMPS) reference\\
+\code{msh\_substrate\_ldos\_tn.ipynb} & Julia: LDOS with MPS cuts, KPM and DMRG subgap levels\\
 \code{substrate\_model.jl}, \code{substrate\_model.py} & the model and helpers the notebooks share (Julia, Python)\\
 \code{ftz.c} & C: flush-to-zero / denormals-are-zero switch for \code{mumps\_ftz}\\
 \end{tabular}}\\[1.2em]
@@ -30,7 +32,7 @@ Repository \code{MSH\_Tensor\_Network\_Methods}, branch \code{msh-substrate}\\[0
 \end{center}
 
 \vspace{1em}
-\noindent This document explains every function and struct defined in the five notebooks and the two model files (folder \code{msh\_substrate/}): what it
+\noindent This document explains every function and struct defined in the seven notebooks and the two model files (folder \code{msh\_substrate/}): what it
 computes, the method, its inputs and outputs, the numerical settings that matter, and where it is used. Numbers stated in the
 markdown of the notebooks are quoted as such; numbers from the outputs are those of the executed notebooks in the repository. Function names in
 \code{typewriter} are those of the code.
@@ -59,6 +61,9 @@ zero-mode pair and its charge difference $\Delta Q = \bra{\psi_f}\tau_z\ket{\psi
 \item \code{msh\_substrate\_td\_python.ipynb} (Python, Part IV) and \code{msh\_substrate\_td\_tn.ipynb} (Julia, Part V) evolve the fermion mode
   through a fusion ramp of the chain spins: the sparse-matrix reference (\code{expm\_multiply}) and dense propagation against TDVP, from small
   substrates, where TDVP is checked against the exact evolution, to $2048^2$ sites.
+\item \code{msh\_substrate\_ldos\_python.ipynb} (Python) and \code{msh\_substrate\_ldos\_tn.ipynb} (Julia, Part VI) compute the LDOS: the zero-bias
+  LDOS from the zero modes, the energy-resolved subgap LDOS from all states bound to the chain (dense, MUMPS shift-invert, penalized DMRG),
+  and KPM spectra, with their cost from $32^2$ to $2048^2$.
 \end{itemize}
 Two parameter points are used: the benchmark point $\mu = -7$, $\Delta = 2.4$, $J = 5.8$, $\ell = 12$, where the substrate is a gapped
 trivial superconductor and the zero modes stay on the chain row, and the leaking point $\Delta = 0.6$, $\mu = -3$, $J = 3$, $\ell = 64$
@@ -85,6 +90,10 @@ trivial superconductor and the zero modes stay on the chain row, and the leaking
   the SVD cutoff decides the cost, and cutoff $10^{-12}$ is as accurate as $10^{-14}$ ($1-F = 5\times10^{-8}$) at 1/40 of the cost and 2.4 times
   faster than the sparse reference at $512^2$. At the leaking point the readouts need little bond dimension ($\chi_{\max} = 128$: $1-F\approx10^{-6}$),
   but the sparse reference stays faster up to $512^2$. TDVP needs about 2 GB at every size.
+\item \emph{LDOS} (Part VI). Below the substrate gap only 24 (benchmark) or 106 (leaking) states remain, bound to the chain, so the subgap LDOS
+  is exact from those states and converged in the size. MUMPS shift-invert is faster for every LDOS task up to $1024^2$ (minutes, up to 46 GB);
+  the TN (zero-mode cuts and penalized DMRG on $(H-\sigma)^2+\eta^2$ for the 12 benchmark levels) agrees to $10^{-9}$ and is the only route at
+  $2048^2$ (2.3 h, 2.6 GB). Whole-map KPM on Chebyshev MPOs is not viable ($\chi(T_n)$ = 256 by $n\approx15$).
 \end{itemize}
 
 \subsection{Model and conventions}\label{sec:model}
@@ -200,10 +209,14 @@ prints. Julia: the Pauli matrices, \code{diag\_mpo}, \code{vector\_mps}, \code{d
 helpers of the time-dependent notebooks are in the same files: Python \code{smoothstep}, \code{ramp\_duration}, \code{ramp\_f}, \code{ramp\_texture},
 \code{Ramp}, \code{snap\_every}, \code{phconj}, \code{majoranas}, \code{majorana\_matrix} (Part IV); Julia \code{smoothstep}, \code{ramp\_duration},
 \code{ramp\_f}, \code{ramp\_texture}, \code{ramp\_mpo}, \code{snap\_every} and the keyword \code{profile\_cutoff} of \code{msh\_substrate} (Part V).
+The LDOS helpers are there too: Python \code{site\_weights}, \code{lorentz\_ldos}, \code{jackson\_ldos}, \code{sparse\_site\_moments},
+\code{mumps\_eigsh}; Julia \code{bits\_of}, \code{project\_mps}, \code{row\_weights}, \code{col\_weights}, \code{subgap\_levels}, \code{kpm\_scale},
+\code{site\_kpm\_moments} (Part VI).
 
 Run order (all paths relative to \code{msh\_substrate/}):
 \begin{center}\code{msh\_substrate\_tn.ipynb} $\to$ \code{msh\_substrate\_python.ipynb} $\to$ \code{msh\_substrate\_scaling.ipynb};\quad
-\code{msh\_substrate\_td\_python.ipynb} $\to$ \code{msh\_substrate\_td\_tn.ipynb}.\end{center}
+\code{msh\_substrate\_td\_python.ipynb} $\to$ \code{msh\_substrate\_td\_tn.ipynb} $\to$ \code{msh\_substrate\_ldos\_python.ipynb} (sections 2--5)
+$\to$ \code{msh\_substrate\_ldos\_tn.ipynb} $\to$ \code{msh\_substrate\_ldos\_python.ipynb} (section 6).\end{center}
 Python section 2 needs \code{data/tn\_check\_H.npz} from the TN notebook; Python section 8c needs \code{py\_mumps\_estimates.csv} from
 Python section 6; the scaling notebook only loads files. All timings are single-threaded (\code{BLAS.set\_num\_threads(1)} in Julia;
 \code{OMP\_NUM\_THREADS}, \code{MKL\_NUM\_THREADS}, \code{OPENBLAS\_NUM\_THREADS} set to 1 before NumPy is imported), except the parameter scan of
@@ -232,6 +245,9 @@ File & Written by & Content\\
 \code{td\_tn\_large.csv}, \code{td\_tn\_large\_series.csv} & TD TN sec.~5 & TDVP on large substrates (with $1-F$), and $\Delta Q(t)$, $\chi(t)$\\
 \code{td\_tn\_step\_idle.csv} & TD TN sec.~6.1 & idle TDVP step times\\
 \code{data/td\_tn\_*.npz}, \code{.jls} & TD TN sec.~2, 5 & per-run series, summaries and final MPS (not committed)\\
+\code{ldos\_py\_zerobias.csv}, \code{ldos\_py\_dense.csv}, \code{ldos\_py\_subgap.csv} & LDOS Py sec.~2--4 & costs and subgap counts\\
+\code{ldos\_tn\_zerobias.csv}, \code{ldos\_tn\_chi\_Tn.csv}, \code{ldos\_tn\_levels.csv}, \code{ldos\_kpm\_site.csv} & LDOS TN sec.~2--5 & costs, $\chi(T_n)$, levels, per-site KPM\\
+\code{data/ldos/} & both LDOS notebooks & cuts, spectra, moments, levels (not committed)\\
 \bottomrule
 \end{tabularx}
 \end{center}
@@ -1285,5 +1301,119 @@ large substrates.
 qubits, solved by GMRES sweeps) took 1820 s and 3.0 GB for $1-F = 1.5\times10^{-5}$ on the fast benchmark ramp at $32\times8$, against 10 s and 1.8 GB for
 $1.0\times10^{-7}$ with TDVP; fourth-order commutator-free Magnus steps on the sparse reference are 10--100 times more accurate at equal cost but break
 down from $\delta t\approx0.4$, and the midpoint time-step error is already below the TDVP projection and truncation errors. Neither is used.
+
+\clearpage
+%======================================================================
+\section{Part VI --- LDOS notebooks (\code{msh\_substrate\_ldos\_python.ipynb}, \code{msh\_substrate\_ldos\_tn.ipynb})}
+%======================================================================
+
+The local density of states of the chain on the substrate at both points, with dense and sparse methods (Python) and with tensor
+networks (Julia), and its cost from $32^2$ to $2048^2$ sites. Below the substrate gap (the gap of the substrate without the chain, $J = 0$:
+3.305 at the benchmark point, 0.600 at the leaking point) the only states are those bound to the chain, 24 and 106 at every size from
+$32\times32$ to $1024^2$. The subgap LDOS is therefore exactly
+\[
+A(\mathbf r,\omega) = \sum_k w_k(\mathbf r)\,L_\eta(\omega - E_k),\qquad L_\eta(x) = \frac{\eta/\pi}{x^2+\eta^2},
+\]
+with $w_k(\mathbf r)$ the weight of state $k$ on site $\mathbf r$ (summed over spin; particle + hole, or the particle part an STM tip measures), and
+inside the gap only the zero-mode pair contributes. The cuts are the chain row (columns $i_x - x_0$ in a window of $\pm64$ around the chain),
+and the columns of the first chain site and of its middle (rows $i_y - i_{y0}$, $\pm64$); maps cover $\pm64$ rows and columns. Broadening
+$\eta = 0.02$ (benchmark) and 0.004 (leaking). Results: \code{ldos\_py\_zerobias.csv}, \code{ldos\_py\_dense.csv}, \code{ldos\_py\_subgap.csv},
+\code{ldos\_tn\_zerobias.csv}, \code{ldos\_tn\_chi\_Tn.csv}, \code{ldos\_kpm\_site.csv}, \code{ldos\_tn\_levels.csv} (committed) and \code{data/ldos/}
+(cuts, spectra, moments and levels; not committed). All run flags are off in the committed notebooks.
+
+\subsection{LDOS helpers in the model files}
+
+\begin{function}{site\_weights(psi, Nx, Ny), lorentz\_ldos(E, w, omega, eta) (Python)}
+\code{site\_weights} returns the particle and hole weight per site of a BdG vector (summed over spin) as two $N_y\times N_x$ arrays.
+\code{lorentz\_ldos} is $\sum_k w_k L_\eta(\omega - E_k)$ for energies \code{E} (length $k$) and weights \code{w} ($k\times$ positions), a
+(len(omega) $\times$ positions) array.
+\end{function}
+
+\begin{function}{jackson\_ldos(mu, scale, omega), sparse\_site\_moments(H, n, Ncheb, scale) (Python)}
+\code{jackson\_ldos} turns Chebyshev moments into the spectral function with the Jackson kernel
+$g_n = [(N-n+1)\cos(\pi n/(N+1)) + \sin(\pi n/(N+1))\cot(\pi/(N+1))]/(N+1)$, in physical units. \code{sparse\_site\_moments} computes the moments
+$\mu_m = \langle n,c|T_m(H/s)|n,c\rangle$ of the four components of site $n$ with sparse products and the doubling recursion
+$\mu_{2m} = 2\langle\phi_m|\phi_m\rangle - \mu_0$, $\mu_{2m+1} = 2\langle\phi_{m+1}|\phi_m\rangle - \mu_1$ (so $N$ moments take $N/2$ products), in the
+component order of the Julia function.
+\end{function}
+
+\begin{function}{mumps\_eigsh(H, k) (Python)}
+The $k$ eigenpairs closest to zero by shift-invert \code{eigsh} with a MUMPS (METIS) factorization and \code{ncv} $= 2k+20$, sorted by energy.
+\end{function}
+
+\begin{function}{bits\_of, project\_mps(ψ, fix), row\_weights, col\_weights (Julia)}
+\code{project\_mps} contracts an MPS with basis states on the qubits in \code{fix} (site index $\Rightarrow$ bit), leaving a dense tensor over
+the other sites. \code{row\_weights(ψ, sites, g, iy, ixs)} fixes the y qubits to row $i_y$, makes only that row dense ($4N_x$ entries) and
+returns the particle and hole weights at the columns \code{ixs} ($2\times n$); \code{col\_weights} does the same for a column. A cut costs
+seconds at every size, without the dense state.
+\end{function}
+
+\begin{function}{subgap\_levels(HB, sites, g; nlev, η=1e-2, weight=20.0, nsweeps=30, tries=3) (Julia)}
+The \code{nlev} lowest positive-energy levels: the pair from \code{zero\_mode\_subspace} and \code{fermion\_from\_subspace}, then one penalized
+DMRG per level on $K_\sigma = (H-\sigma)^2+\eta^2$ (\code{TB.build\_K} with shift $\sigma$ = the last level + 0.01), with every state found and its
+partner $C\varphi$ in the penalty list. A DMRG state is a mixture of the $\pm E_k$ pair (degenerate in $K$); diagonalizing $H$ on
+span$\{\psi, C\psi\}$ (generalized $2\times2$ problem with the overlap matrix) gives $\varphi_+$ at $+E_k$. A nearly self-conjugate state
+($|\langle\psi|C\psi\rangle| > 0.99$) or a residual $\|(H-E)\varphi\| > 10^{-3}$ is retried from a new random start. With $K = H^2+\eta^2$ for every
+level, DMRG stalled at the fifth level of the benchmark point (residual 0.76). Returns the energies, the states, residuals, $\chi$ and the time
+per level.
+\end{function}
+
+\begin{function}{kpm\_scale(; t, μ, α, Δ, J), site\_kpm\_moments(HB, sites, g, ix, iy, scale; Ncheb, maxdim, cutoff) (Julia)}
+\code{kpm\_scale} is the half-bandwidth bound $1.05\,(|\mu|+|J|+4\sqrt{t^2+\alpha^2}+|\Delta|)$ on the 2D lattice (21.61 at the benchmark point).
+\code{site\_kpm\_moments} computes the same moments as \code{sparse\_site\_moments} with the Chebyshev vectors as MPSs (\code{apply} of $H/s$
+with \code{maxdim}, \code{cutoff}), starting from the product states of the four local components, and returns the $N\times4$ moments and
+the largest $\chi$.
+\end{function}
+
+\subsection{Python notebook}
+
+\paragraph{Section 2: zero-bias LDOS from the sparse zero mode.} \code{zerobias\_sparse(pt, Lx, Ly, rot)} reads the zero mode $\psi_f(0)$ saved by
+the time-dependent sparse runs (\code{data/td\_py\_psi\_*.npz}; the ramp Hamiltonian at $t = 0$ is the static one) and writes
+$w = 2\sum_c|\psi_{f,c}|^2$ ($|C\psi_f|^2 = |\psi_f|^2$ site by site) on the cuts, per row and in the window (\code{zb\_<pt>\_<Lx>\_<Ly>.npz}), each
+size in a fresh process. 0.05 s to load and 0.03 s to cut at $1024^2$, 139 MB. Weight on the chain row: 0.893 (benchmark), 0.322 (leaking).
+
+\paragraph{Section 3: dense, small sizes.} \code{dense\_ldos} diagonalizes the full matrix (8 threads) at $32\times32$ (benchmark, $D = 4096$, 14 s,
+0.6 GB) and $128\times32$ (leaking, $D = 16\,384$, 730 s, 8.3 GB) and writes the LDOS on the three cuts, including the continuum above the gap,
+and the number of states below the substrate gap (24, 106). \code{heat\_panels} draws three log-scale heatmaps of a cut file.
+
+\paragraph{Section 4: subgap LDOS on large substrates.} \code{subgap\_ldos(pt, L)}: MUMPS factorization with FTZ/DAZ and shift-invert \code{eigsh}
+with $k$ = the subgap count, the LDOS on the cuts (\code{heat\_sparse\_<pt>\_<L>.npz}), and the count of returned states below the gap as a check.
+A larger $k$ pulls ARPACK into the dense continuum just above the gap edge (states at 3.313--3.314 and 0.6001--0.6003) and converges orders of
+magnitude more slowly. Benchmark: 34, 153, 594 s and 1.7, 7.1, 30.6 GB at $256^2$, $512^2$, $1024^2$; leaking: 135, 438, 1904 s and 2.7, 10.9,
+46.0 GB. The highest subgap level (2.9078, 0.5530) is the same at every size.
+
+\paragraph{Section 5: per-site moments.} \code{kpm\_sparse} computes 512 moments of the first chain site at $256^2$ (11.8 s, 281 MB) and $1024^2$
+(219 s, 3.5 GB) as the reference for the TN moments.
+
+\paragraph{Section 6: TN against sparse.} The zero-bias figure (TN cuts at $256^2$--$2048^2$, $|w_{\rm TN}-w_{\rm sparse}|$ on both cuts, TN map at
+$2048^2$), and \code{tn\_cuts(L)}, the LDOS of the TN levels on the cuts from the saved particle and hole weights of $\varphi_+$ (the partner
+$C\varphi_+$ has the same total weight and its particle weight is the hole weight of $\varphi_+$), compared with \code{heat\_sparse}: energies to
+$1.6\times10^{-9}$, $6.0\times10^{-9}$, $1.3\times10^{-9}$ and cuts to $7\times10^{-5}$, $2\times10^{-5}$, $3\times10^{-6}$ relative at $256^2$, $512^2$, $1024^2$; then
+the TN heatmaps at $2048^2$.
+
+\subsection{TN notebook}
+
+\paragraph{Section 2: zero-bias LDOS from the TN zero mode.} \code{zerobias\_tn(pt, L)}: the zero-mode pipeline, then the cuts and the 128-row
+window by \code{row\_weights} / \code{col\_weights} (9--14 s). DMRG 138--219 s and 1.4--1.6 GB at the benchmark point, 1370--3685 s and 1.7--2.2 GB
+at the leaking point, $\chi(\psi_f)$ 43 and 211--214; agreement with the sparse cuts $\le6.4\times10^{-9}$.
+
+\paragraph{Section 3: whole-map KPM.} \code{chebyshev\_mpo\_chi} runs the MPO Chebyshev recursion $T_{n+1} = 2\tilde HT_n - T_{n-1}$ (cap 256,
+cutoff $10^{-10}$) at $32\times32$: $\chi(T_n)$ = 18, 123, 203, 256 at $n$ = 2, 5, 10, 15, then about 7.5 s per step. The prototype with
+TensorBinding's \code{KPM\_Tn} and \code{get\_ldos\_diag\_from\_Tn} (512 moments, 61 energies) ran over 4 hours without finishing, against 48 s for
+the exact KPM from dense eigenpairs: not viable.
+
+\paragraph{Section 4: per-site KPM.} \code{site\_kpm\_moments} at the first chain site, 512 moments, cap 512: 304 s per site at $256^2$ and 382 s at
+$1024^2$ (cutoff $10^{-10}$), 1.6--1.7 GB, $\chi$ up to 171--175 (about 0.7 per step, set by the spreading of the vector, not by the substrate);
+moment error $4.4\times10^{-5}$ and LDOS error $4.5\times10^{-6}$ relative. Cutoff $10^{-8}$: 262 s, $\chi$ 151, LDOS error $7\times10^{-5}$.
+The sparse moments are faster up to $1024^2$ (1.7 times there); the crossing extrapolates to about $2048^2$.
+
+\paragraph{Section 5: subgap levels.} \code{run\_levels(L)} calls \code{subgap\_levels} with 12 levels at the benchmark point and saves the energies
+and the particle and hole weights of each level on the cuts and in the window (\code{levels\_tn\_bench\_<L>.npz}). 1177, 2348, 5786 and 8343 s at
+$256^2$--$2048^2$ (1.6--2.6 GB), residuals $\le1.4\times10^{-5}$, $\chi$ 25--34 above the pair; $2048^2$ agrees with $1024^2$ to $1.2\times10^{-9}$ in energy
+and $7.5\times10^{-6}$ in the cuts. The leaking point's 53 levels ($\chi\approx210$) were not run.
+
+\paragraph{Summary} (markdown of the TN notebook). Up to $1024^2$ MUMPS is faster for every LDOS task; the TN stays at 1.4--2.6 GB at every size
+and is the only practical route at $2048^2$ (zero-bias maps and the full subgap LDOS of the benchmark point); per-site TN KPM pays off from
+about $2048^2$; the whole-map MPO KPM is not viable.
 
 \end{document}
