@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Rebuild the function-reference PDFs in docs/ from the LaTeX sources and the executed notebooks.
 #
-# usage: docs/src/build.sh [kitaev] [msh_chain] [tjunctions] [msh_substrate]     (default: all four)
+# usage: docs/src/build.sh [kitaev] [msh_chain] [tjunctions] [msh_substrate] [logical_gates]     (default: all five)
 #
 # Needs python3 (standard library only) and tectonic (XeLaTeX; e.g. `conda install -c conda-forge tectonic`).
 # Tectonic downloads the TeX packages and fonts it needs on the first run.
@@ -13,14 +13,15 @@ declare -A PDF=(
     [msh_chain]=msh_chain_function_reference.pdf
     [tjunctions]=msh_tjunctions_function_reference.pdf
     [msh_substrate]=msh_substrate_function_reference.pdf
+    [logical_gates]=msh_logical_gates_function_reference.pdf
 )
 docs=("$@")
-[ ${#docs[@]} -eq 0 ] && docs=(kitaev msh_chain tjunctions msh_substrate)
+[ ${#docs[@]} -eq 0 ] && docs=(kitaev msh_chain tjunctions msh_substrate logical_gates)
 
 python3 figures.py
 
 for d in "${docs[@]}"; do
-    [ -n "${PDF[$d]:-}" ] || { echo "unknown document: $d (kitaev, msh_chain, tjunctions, msh_substrate)"; exit 1; }
+    [ -n "${PDF[$d]:-}" ] || { echo "unknown document: $d (kitaev, msh_chain, tjunctions, msh_substrate, logical_gates)"; exit 1; }
     echo "building $d ..."
     (cd "$d" && tectonic --keep-logs main.tex > build.log 2>&1) || { grep -n '^error' "$d/build.log"; exit 1; }
     grep 'Missing character' "$d/main.log" | sort -u || true

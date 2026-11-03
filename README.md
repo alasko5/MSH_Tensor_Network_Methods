@@ -22,6 +22,8 @@ Python/kwant notebooks.
 | `msh_substrate/msh_substrate_ldos_python.ipynb` | Python | LDOS of the chain on the substrate, dense and sparse reference: zero-bias LDOS from the zero modes, energy-resolved LDOS from dense diagonalization (small sizes) and from all subgap states by MUMPS shift-invert (256² to 1024²), per-site Chebyshev moments, and the figures comparing TN and sparse. |
 | `msh_substrate/msh_substrate_ldos_tn.ipynb` | Julia | LDOS with tensor networks: zero-bias cuts read off the TN zero mode, the bond dimension of the Chebyshev MPOs (whole-map KPM), per-site KPM with Chebyshev MPSs, and all subgap levels by penalized DMRG on (H − σ)² + η², 256² to 2048². |
 | `msh_substrate/msh_substrate_td_tn.ipynb` | Julia | The same ramp with two-site TDVP on the quantics MPO: against the exact evolution at small sizes, then 256 × 256 to 2048 × 2048 sites with SVD-cutoff and bond-dimension-cap scans, fidelity against the sparse reference and idle-machine step times. |
+| `logical_gates_tn.ipynb` | Julia | Logical gates (√Z, Z, √X, X) of the T-junction array by the reduced method: the 4×4 Majorana matrix M from the TDVP overlaps cached by `msh_tjunctions_tn.ipynb`, and its spin representation on the zero-mode Fock space (signs and relative phases). No new time evolution. Writes `logical_gates_tn.csv`. |
+| `logical_gates_python_ed.ipynb` | Python | Dense reference for the logical gates: the full-frame many-body amplitudes from a Pfaffian (generalized Wick theorem, as in the CZ and period-finding notebooks), including the probability that the bulk stays unexcited, against the reduced method from the same evolution, and against the tensor-network gates of `logical_gates_tn.csv`. |
 | `kitaev_charge_difference.ipynb` | Julia | Kitaev chain: fermion mode from the DMRG Majorana doublet, KPM LDOS, McWeeny bulk projector with ϵF = −(E_mode + E_gap)/2, ΔQ versus topological length, and a time-dependent smoothstep ramp that fuses the Majoranas (TDVP, with TDVP and McWeeny bulk densities). |
 
 ## Documentation
@@ -34,7 +36,11 @@ settings, and the printed results and figures.
 | `docs/kitaev_charge_difference_function_reference.pdf` | `kitaev_charge_difference.ipynb` |
 | `docs/msh_chain_function_reference.pdf` | `msh_chain_tn.ipynb`, `msh_chain_python_ed.ipynb`, `msh_chain_compare.ipynb`, and the TensorBinding routines they use |
 | `docs/msh_tjunctions_function_reference.pdf` | `msh_tjunctions_tn.ipynb`, `tjunctions_python_ed.ipynb`, `tjunctions_compare.ipynb` |
-| `docs/msh_substrate_function_reference.pdf` | the three notebooks in `msh_substrate/` |
+| `docs/msh_substrate_function_reference.pdf` | the seven notebooks in `msh_substrate/` and `msh_substrate/substrate_model.py`, `.jl` |
+| `docs/msh_logical_gates_function_reference.pdf` | `logical_gates_tn.ipynb`, `logical_gates_python_ed.ipynb`, `tjunctions_model.py` |
+
+`tjunctions_model.py` holds the Python model of the T-junction array (geometry, kwant system, protocols, Hamiltonian, zero-mode
+construction and the Gauss–Legendre step), imported by `tjunctions_python_ed.ipynb` and `logical_gates_python_ed.ipynb`.
 
 The LaTeX sources are in `docs/src/`; `docs/src/build.sh` rebuilds the PDFs from them and the notebook outputs (see
 `docs/src/README.md`).
@@ -54,6 +60,7 @@ Committed CSVs (small results that other notebooks read):
 | `msh_substrate/td_tn_runs.csv`, `td_tn_dQ.csv`, `td_tn_large.csv`, `td_tn_large_series.csv`, `td_tn_step_idle.csv` | `msh_substrate_td_tn.ipynb` | itself |
 | `msh_substrate/ldos_py_zerobias.csv`, `ldos_py_dense.csv`, `ldos_py_subgap.csv` | `msh_substrate_ldos_python.ipynb` | itself |
 | `msh_substrate/ldos_tn_zerobias.csv`, `ldos_tn_chi_Tn.csv`, `ldos_tn_levels.csv`, `ldos_kpm_site.csv` | `msh_substrate_ldos_tn.ipynb` (and the sparse rows of `ldos_kpm_site.csv` from the Python notebook) | both LDOS notebooks |
+| `logical_gates_tn.csv` | `logical_gates_tn.ipynb` | `logical_gates_python_ed.ipynb` |
 
 Also committed, so that the two compare notebooks run from a fresh clone without rerunning anything:
 
@@ -74,6 +81,8 @@ Other caches and large outputs (`*.jls`, other `*.npz`, `*.npy`, `*.h5`, the fig
   `tdvp_progress.log` and `tdvp_status.txt` (progress of a TDVP run), `tb_reference/` (dense form of the MPO at four protocol points,
   ~21 MB, read by `tjunctions_python_ed.ipynb`), figures `nb_*.png`.
 - `tjunctions_python_ed.ipynb`: `tjunctions_python_ed_data/` (LDOS, δn, gate results and timings as `.npz`, and figures).
+- `logical_gates_python_ed.ipynb`: `logical_gates_python_ed_data/frames.npz` (the evolved full frames after one and two exchanges,
+  ~30 min; `RUN_EVOLUTION = True` to recompute).
 
 ## Running
 
@@ -99,15 +108,17 @@ Other caches and large outputs (`*.jls`, other `*.npz`, `*.npy`, `*.h5`, the fig
    2.5 hours with six threads (start Jupyter with `JULIA_NUM_THREADS=6`; follow `tdvp_status.txt`); later runs load the cached results
    and take about 10 minutes (DMRG). Then run `tjunctions_python_ed.ipynb` (about 35 minutes) in the same directory, and finally
    `tjunctions_compare.ipynb`. The compare notebook alone runs immediately on the committed CSV and `.npz` files.
-5. **Substrate scaling** (`msh_substrate/`). `msh_substrate_scaling.ipynb` runs immediately on the committed CSVs. To regenerate them,
+5. **Logical gates.** `logical_gates_tn.ipynb` needs the TDVP caches of `msh_tjunctions_tn.ipynb` (`msh_tjunctions_tdvp_{Z,X}.jls`) and runs
+   in seconds; `logical_gates_python_ed.ipynb` evolves the full frame once (about 30 minutes, then cached) and reads `logical_gates_tn.csv`.
+6. **Substrate scaling** (`msh_substrate/`). `msh_substrate_scaling.ipynb` runs immediately on the committed CSVs. To regenerate them,
    run `msh_substrate_tn.ipynb` first (it writes the check matrices in `msh_substrate/data/` that the Python notebook reads; about 3 hours,
    mostly the second parameter point), then `msh_substrate_python.ipynb` (about 20 minutes plus the large sparse runs; the MUMPS run at
    1024 × 1024 needs about 30 GB). Both resume from their CSVs when interrupted.
-6. **Substrate time evolution** (`msh_substrate/`). Both notebooks run in minutes on the committed CSVs (all run flags are off). To
+7. **Substrate time evolution** (`msh_substrate/`). Both notebooks run in minutes on the committed CSVs (all run flags are off). To
    regenerate, run `msh_substrate_td_python.ipynb` first (its saved states in `msh_substrate/data/` are the reference the TN notebook
    compares with; the large sparse runs take hours and up to 30 GB each), then `msh_substrate_td_tn.ipynb` with its run flags on (the
    small sizes take about half a day on 8 workers; the large-substrate runs were made one per process and take up to 16 hours each).
-7. **Substrate LDOS** (`msh_substrate/`). Both notebooks run in about a minute on the committed CSVs, but their figures read the cuts and
+8. **Substrate LDOS** (`msh_substrate/`). Both notebooks run in about a minute on the committed CSVs, but their figures read the cuts and
    levels in `msh_substrate/data/ldos/`, which are not committed. To regenerate: `msh_substrate_ldos_python.ipynb` sections 2–5 (section 2
    needs the zero modes of the time-dependent Python notebook; the 1024² subgap runs need up to 46 GB), then `msh_substrate_ldos_tn.ipynb`
    (the subgap levels take 20 min to 2.3 h per size), then the Python notebook's section 6.
