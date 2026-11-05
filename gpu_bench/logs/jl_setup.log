@@ -1,0 +1,287 @@
+
+[24132] signal 15: Terminated
+in expression starting at /home/alaskowski/MSH_Tensor_Network_Methods/gpu_bench/jlenv/setup.jl:4
+pthread_cond_wait at /lib64/libpthread.so.0 (unknown line)
+uv_cond_wait at /workspace/srcdir/libuv/src/unix/thread.c:822
+ijl_task_get_next at /cache/build/builder-amdci4-4/julialang/julia-ci/src/scheduler.c:614
+wait at ./task.jl:1297
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+_wait at /cache/build/builder-amdci4-4/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:613
+wait at /cache/build/builder-amdci4-4/julialang/julia-ci/usr/share/julia/stdlib/v1.13/FileWatching/src/FileWatching.jl:641
+#socket_callback##6 at /cache/build/builder-amdci4-4/julialang/julia-ci/usr/share/julia/stdlib/v1.13/Downloads/src/Curl/Multi.jl:189
+jfptr_YY.socket_callbackYY.YY.6_2632.1 at /home/alaskowski/.julia/juliaup/julia-1.13.2+0.x64.linux.gnu/share/julia/compiled/v1.13/Downloads/eiA4B_nYUPL.so (unknown line)
+jl_apply at /cache/build/builder-amdci4-4/julialang/julia-ci/src/julia.h:2319 [inlined]
+start_task at /cache/build/builder-amdci4-4/julialang/julia-ci/src/task.c:1287
+unknown function (ip: (nil)) at (unknown file)
+epoll_pwait at /lib64/libc.so.6 (unknown line)
+uv__io_poll at /workspace/srcdir/libuv/src/unix/linux.c:1404
+uv_run at /workspace/srcdir/libuv/src/unix/core.c:430
+ijl_task_get_next at /cache/build/builder-amdci4-4/julialang/julia-ci/src/scheduler.c:533
+wait at ./task.jl:1297
+#wait#392 at ./condition.jl:141
+wait at ./condition.jl:136 [inlined]
+_wait at ./task.jl:312
+sync_end at ./task.jl:589
+macro expansion at ./task.jl:663 [inlined]
+#102 at /cache/build/builder-amdci4-4/julialang/julia-ci/usr/share/julia/stdlib/v1.13/Pkg/src/Operations.jl:1522
+with_download_cancellation at /cache/build/builder-amdci4-4/julialang/julia-ci/usr/share/julia/stdlib/v1.13/Pkg/src/PlatformEngines.jl:313
+#download_artifacts#55 at /cache/build/builder-amdci4-4/julialang/julia-ci/usr/share/julia/stdlib/v1.13/Pkg/src/Operations.jl:1521
+download_artifacts at /cache/build/builder-amdci4-4/julialang/julia-ci/usr/share/julia/stdlib/v1.13/Pkg/src/Operations.jl:1368 [inlined]
+#download_artifacts#108 at /cache/build/builder-amdci4-4/julialang/julia-ci/usr/share/julia/stdlib/v1.13/Pkg/src/Operations.jl:1577
+jfptr_YY.download_artifactsYY.108_41088.1 at /home/alaskowski/.julia/juliaup/julia-1.13.2+0.x64.linux.gnu/share/julia/compiled/v1.13/Pkg/tUTdb_nYUPL.so (unknown line)
+download_artifacts at /cache/build/builder-amdci4-4/julialang/julia-ci/usr/share/julia/stdlib/v1.13/Pkg/src/Operations.jl:1569
+jfptr_download_artifacts_41384.1 at /home/alaskowski/.julia/juliaup/julia-1.13.2+0.x64.linux.gnu/share/julia/compiled/v1.13/Pkg/tUTdb_nYUPL.so (unknown line)
+#add#190 at /cache/build/builder-amdci4-4/julialang/julia-ci/usr/share/julia/stdlib/v1.13/Pkg/src/Operations.jl:2476
+add at /cache/build/builder-amdci4-4/julialang/julia-ci/usr/share/julia/stdlib/v1.13/Pkg/src/Operations.jl:2398 [inlined]
+#add#154 at /cache/build/builder-amdci4-4/julialang/julia-ci/usr/share/julia/stdlib/v1.13/Pkg/src/API.jl:380
+add at /cache/build/builder-amdci4-4/julialang/julia-ci/usr/share/julia/stdlib/v1.13/Pkg/src/API.jl:321
+jfptr_add_41316.1 at /home/alaskowski/.julia/juliaup/julia-1.13.2+0.x64.linux.gnu/share/julia/compiled/v1.13/Pkg/tUTdb_nYUPL.so (unknown line)
+#add#27 at /cache/build/builder-amdci4-4/julialang/julia-ci/usr/share/julia/stdlib/v1.13/Pkg/src/API.jl:172
+jfptr_YY.addYY.27_39924.1 at /home/alaskowski/.julia/juliaup/julia-1.13.2+0.x64.linux.gnu/share/julia/compiled/v1.13/Pkg/tUTdb_nYUPL.so (unknown line)
+add at /cache/build/builder-amdci4-4/julialang/julia-ci/usr/share/julia/stdlib/v1.13/Pkg/src/API.jl:161
+#add#25 at /cache/build/builder-amdci4-4/julialang/julia-ci/usr/share/julia/stdlib/v1.13/Pkg/src/API.jl:160
+add at /cache/build/builder-amdci4-4/julialang/julia-ci/usr/share/julia/stdlib/v1.13/Pkg/src/API.jl:160
+unknown function (ip: 0x7f0b5970de82) at (unknown file)
+jl_apply at /cache/build/builder-amdci4-4/julialang/julia-ci/src/julia.h:2319 [inlined]
+do_call at /cache/build/builder-amdci4-4/julialang/julia-ci/src/interpreter.c:123
+eval_value at /cache/build/builder-amdci4-4/julialang/julia-ci/src/interpreter.c:243
+eval_stmt_value at /cache/build/builder-amdci4-4/julialang/julia-ci/src/interpreter.c:194 [inlined]
+eval_body at /cache/build/builder-amdci4-4/julialang/julia-ci/src/interpreter.c:679
+jl_interpret_toplevel_thunk at /cache/build/builder-amdci4-4/julialang/julia-ci/src/interpreter.c:884
+jl_toplevel_eval_flex at /cache/build/builder-amdci4-4/julialang/julia-ci/src/toplevel.c:742
+jl_eval_toplevel_stmts at /cache/build/builder-amdci4-4/julialang/julia-ci/src/toplevel.c:585
+jl_toplevel_eval_flex at /cache/build/builder-amdci4-4/julialang/julia-ci/src/toplevel.c:683
+ijl_toplevel_eval at /cache/build/builder-amdci4-4/julialang/julia-ci/src/toplevel.c:754
+ijl_toplevel_eval_in at /cache/build/builder-amdci4-4/julialang/julia-ci/src/toplevel.c:799
+eval at ./boot.jl:489
+include_string at ./loading.jl:3045
+_include at ./loading.jl:3105
+include at ./Base.jl:309
+exec_options at ./client.jl:344
+_start at ./client.jl:577
+jfptr__start_60477.1 at /home/alaskowski/.julia/juliaup/julia-1.13.2+0.x64.linux.gnu/lib/julia/sys.so (unknown line)
+jl_apply at /cache/build/builder-amdci4-4/julialang/julia-ci/src/julia.h:2319 [inlined]
+true_main at /cache/build/builder-amdci4-4/julialang/julia-ci/src/jlapi.c:985
+jl_repl_entrypoint at /cache/build/builder-amdci4-4/julialang/julia-ci/src/jlapi.c:1152
+main at /cache/build/builder-amdci4-4/julialang/julia-ci/cli/loader_exe.c:58
+__libc_start_main at /lib64/libc.so.6 (unknown line)
+unknown function (ip: 0x4010b8) at /workspace/srcdir/glibc-2.17/csu/../sysdeps/x86_64/start.S
+unknown function (ip: (nil)) at (unknown file)
+Allocations: 19682698 (Pool: 19677715; Big: 4983); GC: 210
+  Activating project at `~/MSH_Tensor_Network_Methods/gpu_bench/jlenv`
+    Updating `~/MSH_Tensor_Network_Methods/gpu_bench/jlenv/Project.toml`
+  [7073ff75] - IJulia v1.34.4
+  [91a5bcdd] - Plots v1.41.7
+    Updating `~/MSH_Tensor_Network_Methods/gpu_bench/jlenv/Manifest.toml`
+  [66dad0bd] - AliasTables v1.1.3
+  [35d6a980] - ColorSchemes v3.31.0
+  [3da002f7] - ColorTypes v0.12.4
+  [c3611d14] - ColorVectorSpace v0.11.0
+  [5ae59095] - Colors v0.13.3
+  [8f4d0f93] - Conda v1.10.3
+  [d38c429a] - Contour v0.6.3
+  [8bb1440f] - DelimitedFiles v1.9.1
+  [c87230d0] - FFMPEG v0.4.6
+  [53c48c17] - FixedPointNumbers v0.8.6
+  [1fa38f19] - Format v1.3.7
+  [28b8d3ca] - GR v0.73.27
+  [7073ff75] - IJulia v1.34.4
+  [92d709cd] - IrrationalConstants v0.2.7
+  [1019f520] - JLFzf v0.1.11
+  [682c06a0] - JSON v1.11.0
+  [23fbe1c1] - Latexify v0.16.12
+  [2ab3a3ac] - LogExpFunctions v1.0.3
+  [442fdcdd] - Measures v0.3.3
+  [e1d29d7a] - Missings v1.2.0
+  [77ba4419] - NaNMath v1.1.5
+  [69de0a69] - Parsers v3.0.0
+  [ccf2f8ad] - PlotThemes v3.3.0
+  [995b91a9] - PlotUtils v1.5.1
+  [91a5bcdd] - Plots v1.41.7
+  [43287f4e] - PtrArrays v1.4.0
+  [3cdcf5f2] - RecipesBase v1.4.0
+  [01d81517] - RecipesPipeline v0.6.12
+  [05181044] - RelocatableFolders v1.0.1
+  [6c6a2e73] - Scratch v1.3.0
+  [992d4aef] - Showoff v1.1.1
+  [a2af1166] - SortingAlgorithms v1.2.3
+  [10745b16] - Statistics v1.11.5
+  [82ae8749] - StatsAPI v1.8.0
+  [2913bbd2] - StatsBase v0.34.13
+  [ec057cc2] - StructUtils v2.10.0
+  [62fd8b95] - TensorCore v0.1.1
+  [1cfade01] - UnicodeFun v0.4.1
+  [41fe7b60] - Unzip v0.2.0
+  [81def892] - VersionParsing v1.3.0
+  [c2297ded] - ZMQ v1.5.1
+  [6e34b625] - Bzip2_jll v1.0.9+0
+  [83423d85] - Cairo_jll v1.18.8+1
+  [ee1fde0b] - Dbus_jll v1.16.2+0
+  [2702e6a9] - EpollShim_jll v0.0.20230411+1
+  [2e619515] - Expat_jll v2.9.0+0
+  [b22a6f82] - FFMPEG_jll v9.0.2+0
+  [a3f928ae] - Fontconfig_jll v2.18.3+0
+  [d7e528f0] - FreeType2_jll v2.15.0+0
+  [559328eb] - FriBidi_jll v1.0.18+0
+  [0656b61e] - GLFW_jll v3.5.1+0
+  [d2c73de3] - GR_jll v0.73.27+0
+  [b0724c58] - GettextRuntime_jll v0.22.4+0
+  [61579ee1] - Ghostscript_jll v9.55.1+0
+  [7746bdde] - Glib_jll v2.90.1+0
+  [3b182d85] - Graphite2_jll v1.3.16+0
+  [2e76f6c2] - HarfBuzz_jll v100.14006.0+0
+  [aacddb02] - JpegTurbo_jll v3.2.0+1
+  [c1c5ebd0] - LAME_jll v3.100.3+0
+  [88015f11] - LERC_jll v4.2.0+0
+  [1d63c593] - LLVMOpenMP_jll v23.1.1+0
+  [e9f186c6] - Libffi_jll v3.4.7+0
+  [7e76a0d4] - Libglvnd_jll v1.7.1+1
+  [94ce4f54] - Libiconv_jll v1.18.0+0
+  [4b2f31a3] - Libmount_jll v2.42.4+0
+  [89763e89] - Libtiff_jll v4.7.3+0
+  [38a345b3] - Libuuid_jll v2.42.4+0
+  [e7412a2a] - Ogg_jll v1.3.6+0
+  [91d4177d] - Opus_jll v1.6.1+0
+  [36c8627f] - Pango_jll v1.58.2+0
+  [30392449] - Pixman_jll v0.46.4+0
+  [c0090381] - Qt6Base_jll v6.10.2+2
+  [629bc702] - Qt6Declarative_jll v6.10.2+2
+  [ce943373] - Qt6ShaderTools_jll v6.10.2+1
+  [6de9746b] - Qt6Svg_jll v6.10.2+0
+  [e99dba38] - Qt6Wayland_jll v6.10.2+1
+  [a44049a8] - Vulkan_Loader_jll v1.3.243+0
+  [a2964d1f] - Wayland_jll v1.24.0+0
+  [ffd25f8a] - XZ_jll v5.8.4+0
+  [f67eecfb] - Xorg_libICE_jll v1.1.2+0
+  [c834827a] - Xorg_libSM_jll v1.2.6+0
+  [4f6342f7] - Xorg_libX11_jll v1.8.14+0
+  [0c0b7dd1] - Xorg_libXau_jll v1.0.13+0
+  [935fb764] - Xorg_libXcursor_jll v1.2.4+0
+  [a3789734] - Xorg_libXdmcp_jll v1.1.6+0
+  [1082639a] - Xorg_libXext_jll v1.3.8+0
+  [d091e8ba] - Xorg_libXfixes_jll v6.0.2+0
+  [a51aa0fd] - Xorg_libXi_jll v1.8.5+0
+  [d1454406] - Xorg_libXinerama_jll v1.1.7+0
+  [ec84b674] - Xorg_libXrandr_jll v1.5.6+0
+  [ea2f1a96] - Xorg_libXrender_jll v0.9.13+0
+  [a65dc6b1] - Xorg_libpciaccess_jll v0.19.0+0
+  [c7cfdc94] - Xorg_libxcb_jll v1.17.1+0
+  [cc61e674] - Xorg_libxkbfile_jll v1.2.0+0
+  [e920d4aa] - Xorg_xcb_util_cursor_jll v0.1.6+0
+  [12413925] - Xorg_xcb_util_image_jll v0.4.1+0
+  [2def613f] - Xorg_xcb_util_jll v0.4.1+0
+  [975044d2] - Xorg_xcb_util_keysyms_jll v0.4.1+0
+  [0d47668e] - Xorg_xcb_util_renderutil_jll v0.3.10+0
+  [c22f9ab0] - Xorg_xcb_util_wm_jll v0.4.2+0
+  [35661453] - Xorg_xkbcomp_jll v1.5.0+0
+  [33bec58e] - Xorg_xkeyboard_config_jll v2.48.0+0
+  [c5fb5394] - Xorg_xtrans_jll v1.6.0+0
+  [8f1865be] - ZeroMQ_jll v4.3.6+0
+  [35ca27e7] - eudev_jll v3.2.14+0
+  [214eeab7] - fzf_jll v0.61.1+0
+  [a4ae2306] - libaom_jll v3.15.2+0
+  [0ac62f75] - libass_jll v0.17.5+0
+  [1183f4f0] - libdecor_jll v0.2.2+0
+  [8e53e030] - libdrm_jll v2.4.134+0
+  [2db6ffa8] - libevdev_jll v1.13.4+0
+  [f638f0a6] - libfdk_aac_jll v2.0.4+0
+  [36db933b] - libinput_jll v1.28.1+0
+  [b53b4c65] - libpng_jll v1.6.59+1
+  [a9144af2] - libsodium_jll v1.0.21+0
+  [9a156e7d] - libva_jll v2.24.1+0
+  [f27f6e37] - libvorbis_jll v1.3.8+0
+  [009596ad] - mtdev_jll v1.1.7+0
+  [1270edf5] - x264_jll v10164.0.1+0
+  [dfaa095f] - x265_jll v4.1.0+0
+  [d8fb68d0] - xkbcommon_jll v1.13.0+0
+  [a63ad114] - Mmap v1.11.0
+  [05823500] - OpenLibm_jll v0.8.7+0
+        Info We haven't cleaned this depot up for a bit, running Pkg.gc()...
+      Active manifest files: 4 found
+      Active artifact files: 133 found
+      Active scratchspaces: 2 found
+     Deleted 77 package installations (72.218 MiB)
+    Updating registry at `~/.julia/registries/General.toml`
+   Resolving package versions...
+   Installed KernelInterface ──────── v0.4.3
+   Installed NVML ─────────────────── v6.5.1
+   Installed ScopedValues ─────────── v1.6.2
+   Installed GPUToolbox ───────────── v3.5.0
+   Installed MSVCRuntime_jll ──────── v14.51.36247+0
+   Installed CUDATools ────────────── v6.5.1
+   Installed NVTX ─────────────────── v1.0.3
+   Installed GPUCompiler ──────────── v2.20.0
+   Installed GPUArraysCore ────────── v0.2.2
+   Installed tree_sitter_ptx_jll ──── v0.1.0+0
+   Installed cuRAND ───────────────── v6.5.1
+   Installed JuliaNVTXCallbacks_jll ─ v0.2.1+0
+   Installed CUDA_Runtime_jll ─────── v0.25.0+3
+   Installed CEnum ────────────────── v0.5.0
+   Installed RandomNumbers ────────── v1.6.0
+   Installed Hwloc_jll ────────────── v2.15.0+0
+   Installed HashArrayMappedTries ─── v0.2.0
+   Installed LibTracyClient_jll ───── v0.13.1+0
+   Installed BFloat16s ────────────── v0.6.4
+   Installed CUDA_Compiler_jll ────── v0.6.3+2
+   Installed NVTX_jll ─────────────── v3.2.2+0
+   Installed SPIRV_Tools_jll ──────── v2025.4.0+0
+   Installed LMDB_jll ─────────────── v1.0.3+0
+   Installed GPUArrays ────────────── v12.2.0
+   Installed cuSPARSE ─────────────── v6.5.1
+   Installed cuBLAS ───────────────── v6.5.1
+   Installed UnsafeAtomics ────────── v0.4.0
+   Installed pocl_standalone_jll ──── v7.2.3+3
+   Installed SPIRV_LLVM_Backend_jll ─ v23.1.4+0
+   Installed LLVMExtra_jll ────────── v0.0.56+0
+   Installed LLVM ─────────────────── v10.4.3
+   Installed AcceleratedKernels ───── v0.5.11
+   Installed LLVMLoopInfo ─────────── v1.0.0
+   Installed CUPTI ────────────────── v6.5.1
+   Installed CompilerCaching ──────── v0.5.3
+   Installed cuSOLVER ─────────────── v6.5.1
+   Installed tree_sitter_gcn_jll ──── v0.1.0+0
+   Installed demumble_jll ─────────── v1.3.0+0
+   Installed CUDA ─────────────────── v6.5.1
+   Installed Random123 ────────────── v1.7.1
+   Installed CUDACore ─────────────── v6.5.1
+   Installed tree_sitter_llvm_jll ─── v1.1.0+0
+   Installed Atomix ───────────────── v1.7.0
+   Installed NVPTX_LLVM_Backend_jll ─ v23.1.2+2
+   Installed CUDA_Runtime_Discovery ─ v2.1.1
+   Installed Tracy ────────────────── v0.1.6
+   Installed cuFFT ────────────────── v6.5.1
+   Installed XML2_jll ─────────────── v2.15.4+0
+   Installed CUDA_Driver_jll ──────── v13.3.6+0
+   Installed SLEEF_jll ────────────── v3.9.0+2
+   Installed SPIRVIntrinsics ──────── v1.6.0
+   Installed LMDB ─────────────────── v3.0.1
+   Installed KernelAbstractions ───── v0.10.4
+   Installed tree_sitter_spirv_jll ── v0.1.0+0
+  Installing 20 artifacts
+   Installed artifact tree_sitter_ptx    19.7 KiB
+   Installed artifact LMDB               403.4 KiB
+   Installed artifact XML2               1.7 MiB
+   Installed artifact Hwloc              3.0 MiB
+   Installed artifact tree_sitter_gcn    11.5 KiB
+   Installed artifact SPIRV_LLVM_Backend 7.4 MiB
+   Installed artifact tree_sitter_spirv  5.8 KiB
+   Installed artifact LibTracyClient     362.4 KiB
+   Installed artifact NVPTX_LLVM_Backend 8.5 MiB
+   Installed artifact SPIRV_Tools        2.1 MiB
+   Installed artifact demumble           281.4 KiB
+   Installed artifact NVTX               11.8 KiB
+   Installed artifact JuliaNVTXCallbacks 7.5 KiB
+   Installed artifact LLVMExtra          3.8 MiB
+   Installed artifact tree_sitter_llvm   109.2 KiB
+   Installed artifact SLEEF              2.8 MiB
+   Installed artifact pocl_standalone    76.9 MiB
+   Installed artifact CUDA_Driver        104.5 MiB
+   Installed artifact CUDA_Compiler      128.9 MiB
+┌ Error: curl_multi_socket_action: 1
+└ @ Downloads.Curl ~/.julia/juliaup/julia-1.13.2+0.x64.linux.gnu/share/julia/stdlib/v1.13/Downloads/src/Curl/utils.jl:52
+┌ Error: curl_multi_socket_action: 1
+└ @ Downloads.Curl ~/.julia/juliaup/julia-1.13.2+0.x64.linux.gnu/share/julia/stdlib/v1.13/Downloads/src/Curl/utils.jl:52
+┌ Error: timer_callback: unexpected error
+│   err = AssertionError: multi_h == multi.handle
+└ @ Downloads.Curl ~/.julia/juliaup/julia-1.13.2+0.x64.linux.gnu/share/julia/stdlib/v1.13/Downloads/src/Curl/Multi.jl:157

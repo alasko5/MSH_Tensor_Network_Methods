@@ -1,0 +1,9 @@
+load before: 0.73 1.08 1.44 1/846 29217
+CPU L=9 rot=10.0 state=psiT: H_build 0.092  expm 0.608  total 0.699 s
+CPU L=10 rot=10.0 state=psiT: H_build 0.378  expm 2.981  total 3.361 s
+CPU L=11 rot=100.0 state=random: H_build 1.527  expm 11.992  total 13.519 s
+load: 1.01 1.06 1.39 1/838 29230
+CPU L=9 rot=10.0 state=psiT: H_build 0.090  expm 0.598  total 0.688 s
+CPU L=10 rot=10.0 state=psiT: H_build 0.373  expm 2.950  total 3.322 s
+CPU L=11 rot=100.0 state=random: H_build 1.509  expm 11.835  total 13.343 s
+load after: 1.00 1.04 1.34 1/848 29310

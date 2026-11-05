@@ -1,0 +1,130 @@
+Retrieving notices: ...working... done
+Channels:
+ - conda-forge
+Platform: linux-64
+Collecting package metadata (repodata.json): ...working... done
+Solving environment: ...working... done
+
+## Package Plan ##
+
+  environment location: /home/alaskowski/.conda/envs/gpu_bench
+
+  added / updated specs:
+    - cuda-version=12.8
+    - cupy
+    - numpy
+    - python=3.12
+    - scipy
+
+
+The following packages will be downloaded:
+
+    package                    |            build
+    ---------------------------|-----------------
+    cuda-cccl_linux-64-12.8.90 |       ha770c72_1         1.0 MB  conda-forge
+    cuda-cudart-dev_linux-64-12.8.90|       h3f2d84a_1         377 KB  conda-forge
+    cuda-cudart-static_linux-64-12.8.90|       h3f2d84a_1         964 KB  conda-forge
+    cuda-cudart_linux-64-12.8.90|       h3f2d84a_1         188 KB  conda-forge
+    cuda-nvrtc-12.8.93         |       h5888daf_1        63.1 MB  conda-forge
+    cuda-version-12.8          |       h5d125a7_3          21 KB  conda-forge
+    cupy-13.4.1                |  py312h78400a1_0         349 KB  conda-forge
+    cupy-core-13.4.1           |  py312h007fbcc_0        47.2 MB  conda-forge
+    fastrlock-0.8.4            |  py312h80505a6_0          43 KB  conda-forge
+    libblas-3.11.0             |11_h4a7cf45_openblas          18 KB  conda-forge
+    libcblas-3.11.0            |11_h0358290_openblas          18 KB  conda-forge
+    libcublas-12.8.5.5         |       h676940d_0       449.6 MB  conda-forge
+    libcufft-11.3.3.83         |       h5888daf_1       147.6 MB  conda-forge
+    libcurand-10.3.9.90        |       h9ab20c4_1        43.6 MB  conda-forge
+    libcusolver-11.7.3.90      |       h9ab20c4_1       156.8 MB  conda-forge
+    libcusparse-12.5.8.93      |       h5888daf_1       162.2 MB  conda-forge
+    libexpat-2.9.0             |       hd2095e1_0          77 KB  conda-forge
+    libgfortran-16.2.0         |       h69a702a_7          28 KB  conda-forge
+    libgfortran5-16.2.0        |       h6b99dfc_7         2.4 MB  conda-forge
+    liblapack-3.11.0           |11_h47877c9_openblas          18 KB  conda-forge
+    libnsl-2.0.1               |       hb9d3cd8_1          33 KB  conda-forge
+    libnvjitlink-12.9.86       |       hecca717_2        29.1 MB  conda-forge
+    libopenblas-0.3.34         |pthreads_hf13c14d_2         6.5 MB  conda-forge
+    libpython-3.12.16          |ha57cdbe_0_cpython         8.4 MB  conda-forge
+    libsqlite-3.54.1           |     h0737f62_101         958 KB  conda-forge
+    numpy-2.5.4                |  py312he827f4e_0         8.8 MB  conda-forge
+    pip-26.2.2                 |     pyh8b19718_2         1.0 MB  conda-forge
+    python-3.12.16             |h5f976f7_0_cpython        21.9 MB  conda-forge
+    python_abi-3.12            |          9_cp312           7 KB  conda-forge
+    readline-8.3               |       hd6e31c0_1         341 KB  conda-forge
+    scipy-1.18.1               |  py312h106c528_2        16.5 MB  conda-forge
+    setuptools-84.2.1          |     pyhe730653_0         554 KB  conda-forge
+    tzdata-2026e               |       h5d301ff_0         116 KB  conda-forge
+    wheel-0.48.0               |     pyhd8ed1ab_0          34 KB  conda-forge
+    ------------------------------------------------------------
+                                           Total:        1.14 GB
+
+The following NEW packages will be INSTALLED:
+
+  _openmp_mutex      conda-forge/linux-64::_openmp_mutex-4.5-20_gnu 
+  bzip2              conda-forge/linux-64::bzip2-1.0.8-hda65f42_10 
+  ca-certificates    conda-forge/noarch::ca-certificates-2026.10.23-hbd8a1cb_0 
+  cuda-cccl_linux-64 conda-forge/noarch::cuda-cccl_linux-64-12.8.90-ha770c72_1 
+  cuda-cudart-dev_l~ conda-forge/noarch::cuda-cudart-dev_linux-64-12.8.90-h3f2d84a_1 
+  cuda-cudart-stati~ conda-forge/noarch::cuda-cudart-static_linux-64-12.8.90-h3f2d84a_1 
+  cuda-cudart_linux~ conda-forge/noarch::cuda-cudart_linux-64-12.8.90-h3f2d84a_1 
+  cuda-nvrtc         conda-forge/linux-64::cuda-nvrtc-12.8.93-h5888daf_1 
+  cuda-version       conda-forge/noarch::cuda-version-12.8-h5d125a7_3 
+  cupy               conda-forge/linux-64::cupy-13.4.1-py312h78400a1_0 
+  cupy-core          conda-forge/linux-64::cupy-core-13.4.1-py312h007fbcc_0 
+  fastrlock          conda-forge/linux-64::fastrlock-0.8.4-py312h80505a6_0 
+  ld_impl_linux-64   conda-forge/linux-64::ld_impl_linux-64-2.46.1-default_hbd61a6d_103 
+  libblas            conda-forge/linux-64::libblas-3.11.0-11_h4a7cf45_openblas 
+  libcblas           conda-forge/linux-64::libcblas-3.11.0-11_h0358290_openblas 
+  libcublas          conda-forge/linux-64::libcublas-12.8.5.5-h676940d_0 
+  libcufft           conda-forge/linux-64::libcufft-11.3.3.83-h5888daf_1 
+  libcurand          conda-forge/linux-64::libcurand-10.3.9.90-h9ab20c4_1 
+  libcusolver        conda-forge/linux-64::libcusolver-11.7.3.90-h9ab20c4_1 
+  libcusparse        conda-forge/linux-64::libcusparse-12.5.8.93-h5888daf_1 
+  libexpat           conda-forge/linux-64::libexpat-2.9.0-hd2095e1_0 
+  libffi             conda-forge/linux-64::libffi-3.7.0-h81df57d_1 
+  libgcc             conda-forge/linux-64::libgcc-16.2.0-ha9f2e26_7 
+  libgfortran        conda-forge/linux-64::libgfortran-16.2.0-h69a702a_7 
+  libgfortran5       conda-forge/linux-64::libgfortran5-16.2.0-h6b99dfc_7 
+  libgomp            conda-forge/linux-64::libgomp-16.2.0-he0feb66_7 
+  liblapack          conda-forge/linux-64::liblapack-3.11.0-11_h47877c9_openblas 
+  liblzma            conda-forge/linux-64::liblzma-5.8.3-hb03c661_1 
+  libnsl             conda-forge/linux-64::libnsl-2.0.1-hb9d3cd8_1 
+  libnvjitlink       conda-forge/linux-64::libnvjitlink-12.9.86-hecca717_2 
+  libopenblas        conda-forge/linux-64::libopenblas-0.3.34-pthreads_hf13c14d_2 
+  libpython          conda-forge/linux-64::libpython-3.12.16-ha57cdbe_0_cpython 
+  libsqlite          conda-forge/linux-64::libsqlite-3.54.1-h0737f62_101 
+  libstdcxx          conda-forge/linux-64::libstdcxx-16.2.0-h934c35e_7 
+  libuuid            conda-forge/linux-64::libuuid-2.42.4-hcfc3c73_0 
+  libxcrypt          conda-forge/linux-64::libxcrypt-4.4.38-h280c20c_0 
+  libzlib            conda-forge/linux-64::libzlib-1.3.2-h25fd6f3_3 
+  ncurses            conda-forge/linux-64::ncurses-6.6-hdb14827_1 
+  numpy              conda-forge/linux-64::numpy-2.5.4-py312he827f4e_0 
+  openssl            conda-forge/linux-64::openssl-3.6.5-h781a0a9_0 
+  packaging          conda-forge/noarch::packaging-26.3-pyhc364b38_0 
+  pip                conda-forge/noarch::pip-26.2.2-pyh8b19718_2 
+  python             conda-forge/linux-64::python-3.12.16-h5f976f7_0_cpython 
+  python_abi         conda-forge/noarch::python_abi-3.12-9_cp312 
+  readline           conda-forge/linux-64::readline-8.3-hd6e31c0_1 
+  scipy              conda-forge/linux-64::scipy-1.18.1-py312h106c528_2 
+  setuptools         conda-forge/noarch::setuptools-84.2.1-pyhe730653_0 
+  tk                 conda-forge/linux-64::tk-8.6.13-noxft_h1df4ec4_4 
+  tzdata             conda-forge/noarch::tzdata-2026e-h5d301ff_0 
+  wheel              conda-forge/noarch::wheel-0.48.0-pyhd8ed1ab_0 
+  zstd               conda-forge/linux-64::zstd-1.5.7-hb78ec9c_7 
+
+
+
+Downloading and Extracting Packages: ...working... done
+Preparing transaction: ...working... done
+Verifying transaction: ...working... done
+Executing transaction: ...working... done
+#
+# To activate this environment, use
+#
+#     $ conda activate /home/alaskowski/.conda/envs/gpu_bench
+#
+# To deactivate an active environment, use
+#
+#     $ conda deactivate
+
+EXIT 0

@@ -1,0 +1,2 @@
+GPU bench9    χ= 74: H_build 0.087  transfer 0.0033  sweep 1.960  total 2.069 s  (device mem in use 3189 MiB)
+CHECK bench9   : |<ψ_cpu|ψ_gpu>| - 1 = -2.89e-15   ‖ψ_cpu - ψ_gpu‖ = 3.65e-15   χ_cpu=74 χ_gpu=74
