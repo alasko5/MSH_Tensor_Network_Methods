@@ -76,9 +76,13 @@ S_tilt(ix) = (sin(0.3ix) * cos(0.7), sin(0.3ix) * sin(0.7), cos(0.3ix))
 
 BdG MPO of the MSH chain (spin texture `S(ix)`) on the substrate `g`. `sites` reuses existing site indices. `profile_cutoff` is the
 truncation cutoff (discarded squared weight) of the exchange profiles along x; the default 1e-14 is exact for the static textures,
-while a generic texture (the ramp) needs 1e-20 (with 1e-14 its entries are off by up to ~5e-7).
+while a generic texture (the ramp) needs 1e-20 (with 1e-14 its entries are off by up to ~5e-7). `cutoff` truncates the MPO sums;
+it is relative to the norm of the whole operator, which grows with the lattice, so the absolute error of H grows with N. The
+default 1e-20 keeps H essentially exact (χ ≈ 32) up to 16384² (with 1e-16 the zero mode at 8192² is wrong: E_f off by 2e-3,
+ΔQ by 16%). `ramp_mpo` uses 1e-16, enough for the TDVP ramps up to 2048² at 2–3× less cost per step than 1e-20 (with 1e-13 the
+final ΔQ error was 1.8e-5 at 512², 4.5e-5 at 1024², and the slow ramp grew χ to 256 instead of ~50).
 """
-function msh_substrate(g::Substrate, S; t=1.0, μ=-7.0, α=0.9, Δ=2.4, J=5.8, cutoff=1e-13, sites=nothing, profile_cutoff=1e-14)
+function msh_substrate(g::Substrate, S; t=1.0, μ=-7.0, α=0.9, Δ=2.4, J=5.8, cutoff=1e-20, sites=nothing, profile_cutoff=1e-14)
     nx = Nx(g)
     ns, ss, pos = isnothing(sites) ? (TB.nambu_index(), TB.spin_index(), siteinds("Qubit", g.Lx + g.Ly)) :
                                      (sites[1], sites[2], sites[3:end])
@@ -207,8 +211,10 @@ ramp_f(t, n, ℓ, rot_T; ℓ_final=RAMP_ELL_FINAL, step_T=RAMP_STEP_T) =
 "Spin texture S(ix) of the chain of `g` at time t."
 ramp_texture(t, g::Substrate, rot_T; kw...) =
     (x0 = first(chain_x(g)); ix -> (θ = (-1)^ix * (π / 2) * ramp_f(t, ix - x0, g.ℓ, rot_T; kw...); (0.0, sin(θ), cos(θ))))
-"BdG MPO of the ramp at time t on the existing `sites` (parameters P as for msh_substrate; exchange profiles with cutoff 1e-20)."
-ramp_mpo(t, g::Substrate, rot_T, sites; P...) = first(msh_substrate(g, ramp_texture(t, g, rot_T); sites, profile_cutoff=1e-20, P...))
+"BdG MPO of the ramp at time t on the existing `sites` (parameters P as for msh_substrate; exchange profiles with cutoff 1e-20,
+MPO sums with cutoff 1e-16 unless P sets `cutoff`)."
+ramp_mpo(t, g::Substrate, rot_T, sites; cutoff=1e-16, P...) =
+    first(msh_substrate(g, ramp_texture(t, g, rot_T); sites, cutoff, profile_cutoff=1e-20, P...))
 "Number of steps between recorded snapshots: about n snapshots over the ramp (the same rule in substrate_model.py)."
 snap_every(T, dt; n=130) = max(1, round(Int, T / dt / n))
 

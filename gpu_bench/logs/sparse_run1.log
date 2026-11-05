@@ -1,0 +1,9 @@
+load before: 1.59 1.80 2.15 1/872 26733
+CPU L=9 rot=10.0 state=psiT: H_build 0.092  expm 0.613  total 0.703 s
+CPU L=10 rot=10.0 state=psiT: H_build 0.380  expm 2.957  total 3.333 s
+CPU L=11 rot=100.0 state=random: H_build 1.530  expm 11.979  total 13.511 s
+load: 2.13 1.95 2.15 2/860 26819
+GPU L=9 rot=10.0 state=psiT: H_build 0.145  transfer 0.019  expm 0.032  total 0.196 s  (m*=26, s=1, nnz(H)=20938752, cupy pool 588 MiB, device used 897 MiB)
+GPU L=10 rot=10.0 state=psiT: H_build 0.561  transfer 0.076  expm 0.131  total 0.768 s  (m*=26, s=1, nnz(H)=83820544, cupy pool 2354 MiB, device used 2667 MiB)
+GPU L=11 rot=100.0 state=random: H_build 2.337  transfer 0.307  expm 0.506  total 3.152 s  (m*=26, s=1, nnz(H)=335413248, cupy pool 9421 MiB, device used 9743 MiB)
+load after: 4.01 2.45 2.30 3/871 27637

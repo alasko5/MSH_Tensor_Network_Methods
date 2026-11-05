@@ -1,0 +1,141 @@
+  Activating project at `~/MSH_Tensor_Network_Methods/gpu_bench/jlenv`
+   Resolving package versions...
+  Installing 1 artifacts
+   Installed artifact CUDA_Runtime       1.0 GiB
+    Updating `~/MSH_Tensor_Network_Methods/gpu_bench/jlenv/Project.toml`
+  [052768ef] + CUDA v6.5.1
+  [9e88b42a] + Serialization v1.11.0
+    Updating `~/MSH_Tensor_Network_Methods/gpu_bench/jlenv/Manifest.toml`
+  [6a4ca0a5] + AcceleratedKernels v0.5.11
+  [a9b6321e] + Atomix v1.7.0
+  [ab4f0b2a] + BFloat16s v0.6.4
+⌅ [fa961155] + CEnum v0.5.0
+  [052768ef] + CUDA v6.5.1
+  [bd0ed864] + CUDACore v6.5.1
+  [9ec180c6] + CUDATools v6.5.1
+  [1af6417a] + CUDA_Runtime_Discovery v2.1.1
+  [9e67e8f6] + CUPTI v6.5.1
+  [9db33cc3] + CompilerCaching v0.5.3
+  [0c68f7d7] + GPUArrays v12.2.0
+  [46192b85] + GPUArraysCore v0.2.2
+  [61eb1bfa] + GPUCompiler v2.20.0
+  [096a3bc2] + GPUToolbox v3.5.0
+  [076d061b] + HashArrayMappedTries v0.2.0
+  [63c18a36] + KernelAbstractions v0.10.4
+  [4ee993da] + KernelInterface v0.4.3
+  [929cbde3] + LLVM v10.4.3
+  [8b046642] + LLVMLoopInfo v1.0.0
+  [11f193de] + LMDB v3.0.1
+  [611af6d1] + NVML v6.5.1
+  [5da4648a] + NVTX v1.0.3
+  [74087812] + Random123 v1.7.1
+  [e6cf234a] + RandomNumbers v1.6.0
+  [71d1d633] + SPIRVIntrinsics v1.6.0
+  [7e506255] + ScopedValues v1.6.2
+  [6c6a2e73] + Scratch v1.3.0
+  [10745b16] + Statistics v1.11.5
+  [e689c965] + Tracy v0.1.6
+  [013be700] + UnsafeAtomics v0.4.0
+  [182d3088] + cuBLAS v6.5.1
+  [533571aa] + cuFFT v6.5.1
+  [20fd9a0b] + cuRAND v6.5.1
+  [887afef0] + cuSOLVER v6.5.1
+  [b26da814] + cuSPARSE v6.5.1
+→ [d1e2174e] + CUDA_Compiler_jll v0.6.3+2
+  [4ee394cb] + CUDA_Driver_jll v13.3.6+0
+→ [76a88914] + CUDA_Runtime_jll v0.25.0+3
+  [e33a78d0] + Hwloc_jll v2.15.0+0
+  [9c1d0b0a] + JuliaNVTXCallbacks_jll v0.2.1+0
+  [dad2f222] + LLVMExtra_jll v0.0.56+0
+  [1d63c593] + LLVMOpenMP_jll v23.1.1+0
+  [6206cf0b] + LMDB_jll v1.0.3+0
+  [ad6e5548] + LibTracyClient_jll v0.13.1+0
+  [94ce4f54] + Libiconv_jll v1.18.0+0
+  [ce32ce21] + MSVCRuntime_jll v14.51.36247+0
+  [ef6e0fe3] + NVPTX_LLVM_Backend_jll v23.1.2+2
+  [e98f9f5b] + NVTX_jll v3.2.2+0
+  [63e82ce6] + SLEEF_jll v3.9.0+2
+  [4376b9bf] + SPIRV_LLVM_Backend_jll v23.1.4+0
+⌅ [6ac6d60f] + SPIRV_Tools_jll v2025.4.0+0
+  [02c8fc9c] + XML2_jll v2.15.4+0
+  [a65dc6b1] + Xorg_libpciaccess_jll v0.19.0+0
+  [1e29f10c] + demumble_jll v1.3.0+0
+  [54f56a70] + pocl_standalone_jll v7.2.3+3
+  [8b5cbfcf] + tree_sitter_gcn_jll v0.1.0+0
+  [44208993] + tree_sitter_llvm_jll v1.1.0+0
+  [71e3f6e6] + tree_sitter_ptx_jll v0.1.0+0
+  [f0e86581] + tree_sitter_spirv_jll v0.1.0+0
+        Info Packages marked with → are not downloaded, use `instantiate` to download
+        Info Packages marked with ⌅ have new versions available but compatibility constraints restrict them from upgrading. To see why use `status --outdated -m`
+  Installing 2 artifacts
+   Installed artifact CUDA_Compiler      180.9 MiB
+   Installed artifact CUDA_Runtime       948.4 MiB
+Precompiling packages...
+   9.3 s  ✓ CEnum
+   9.0 s  ✓ LLVMLoopInfo
+   8.7 s  ✓ BFloat16s
+   8.6 s  ✓ GPUArraysCore
+   8.4 s  ✓ HashArrayMappedTries
+   9.6 s  ✓ GPUToolbox
+   9.4 s  ✓ KernelInterface
+  13.1 s  ✓ CUDA_Runtime_Discovery
+  12.2 s  ✓ RandomNumbers
+   4.5 s  ✓ MSVCRuntime_jll
+   5.0 s  ✓ LibTracyClient_jll
+   5.3 s  ✓ SPIRV_LLVM_Backend_jll
+   5.3 s  ✓ SPIRV_Tools_jll
+   5.3 s  ✓ LLVMExtra_jll
+   5.2 s  ✓ NVPTX_LLVM_Backend_jll
+   5.1 s  ✓ tree_sitter_llvm_jll
+   4.9 s  ✓ NVTX_jll
+   4.9 s  ✓ tree_sitter_ptx_jll
+   3.1 s  ✓ ScopedValues
+   4.9 s  ✓ JuliaNVTXCallbacks_jll
+   4.5 s  ✓ tree_sitter_spirv_jll
+   4.1 s  ✓ demumble_jll
+   4.3 s  ✓ LMDB_jll
+   5.9 s  ✓ XML2_jll
+   4.9 s  ✓ CUDA_Driver_jll
+   2.7 s  ✓ tree_sitter_gcn_jll
+   2.4 s  ✓ Random123
+   2.6 s  ✓ SLEEF_jll
+   2.7 s  ✓ Tracy
+   2.5 s  ✓ NVTX
+   5.0 s  ✓ Hwloc_jll
+   5.5 s  ✓ LMDB
+   5.3 s  ✓ CompilerCaching
+   7.3 s  ✓ pocl_standalone_jll
+  13.0 s  ✓ CUDA_Compiler_jll
+  36.3 s  ✓ LLVM
+   9.2 s  ✓ LLVM → BFloat16sExt
+  10.3 s  ✓ UnsafeAtomics
+  34.6 s  ✓ CUDA_Runtime_jll
+   2.1 s  ✓ Atomix
+   4.4 s  ✓ SPIRVIntrinsics
+  35.4 s  ✓ GPUCompiler
+   2.7 s  ✓ UnsafeAtomics → UnsafeAtomicsGPUCompilerExt
+  36.4 s  ✓ KernelAbstractions
+   2.6 s  ✓ KernelAbstractions → LinearAlgebraExt
+   3.1 s  ✓ KernelAbstractions → SparseArraysExt
+   3.4 s  ✓ AcceleratedKernels
+   4.2 s  ✓ GPUArrays
+  59.7 s  ✓ CUDACore
+   4.7 s  ✓ AcceleratedKernels → CUDACoreExt
+   4.5 s  ✓ cuFFT
+   5.4 s  ✓ cuRAND
+  10.2 s  ✓ NVML
+  12.7 s  ✓ CUPTI
+  18.4 s  ✓ cuBLAS
+  18.7 s  ✓ cuSPARSE
+  10.7 s  ✓ cuSOLVER
+  27.0 s  ✓ CUDATools
+   6.5 s  ✓ CUDA
+  59 dependencies successfully precompiled in 253 seconds. 62 already precompiled.
+Status `~/MSH_Tensor_Network_Methods/gpu_bench/jlenv/Project.toml`
+  [052768ef] CUDA v6.5.1
+⌅ [0d1a4710] ITensorMPS v0.3.44
+  [9136182c] ITensors v0.9.32
+  [15e1cf62] NPZ v0.4.3
+  [3b6805fc] TensorBinding v0.2.0
+  [9e88b42a] Serialization v1.11.0
+Info Packages marked with ⌅ have new versions available but compatibility constraints restrict them from upgrading. To see why use `status --outdated`

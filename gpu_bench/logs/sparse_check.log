@@ -1,0 +1,1 @@
+CHECK L=9 state=psiT: |psi_gpu - psi_cpu| = 1.311e-16  |psi_cpu - psi0| = 3.163e-01  norm(psi_gpu) - 1 = -4.44e-15  (m*=26, s=1)

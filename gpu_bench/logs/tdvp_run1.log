@@ -1,0 +1,21 @@
+load before: 0.90 1.39 1.85 1/845 28850
+CPU bench9    χ= 74: reference call 0.903 s | H_build 0.031  sweep 0.826  sum 0.857 s
+CPU bench10   χ= 74: reference call 0.760 s | H_build 0.036  sweep 0.726  sum 0.762 s
+CPU bench11   χ= 75: reference call 1.320 s | H_build 0.042  sweep 1.279  sum 1.320 s
+CPU bench11s  χ=104: reference call 1.326 s | H_build 0.043  sweep 1.281  sum 1.326 s
+CPU leak128   χ=128: reference call 9.422 s | H_build 0.029  sweep 9.371  sum 9.401 s
+CPU leak256   χ=256: reference call 29.113 s | H_build 0.025  sweep 28.865  sum 28.890 s
+load: 1.08 1.15 1.56 1/840 29014
+GPU bench9    χ= 74: H_build 0.047  transfer 0.0031  sweep 1.885  total 2.146 s  (device mem in use 3157 MiB)
+CHECK bench9   : |<ψ_cpu|ψ_gpu>| - 1 = -2.89e-15   ‖ψ_cpu - ψ_gpu‖ = 3.65e-15   χ_cpu=74 χ_gpu=74
+GPU bench10   χ= 74: H_build 0.036  transfer 0.0002  sweep 2.188  total 2.222 s  (device mem in use 2921 MiB)
+CHECK bench10  : |<ψ_cpu|ψ_gpu>| - 1 = -3.11e-15   ‖ψ_cpu - ψ_gpu‖ = 3.37e-15   χ_cpu=74 χ_gpu=74
+GPU bench11   χ= 75: H_build 0.114  transfer 0.0038  sweep 2.311  total 2.429 s  (device mem in use 4137 MiB)
+CHECK bench11  : |<ψ_cpu|ψ_gpu>| - 1 = 6.66e-16   ‖ψ_cpu - ψ_gpu‖ = 4.35e-15   χ_cpu=76 χ_gpu=76
+GPU bench11s  χ=104: H_build 0.121  transfer 0.0041  sweep 2.397  total 2.522 s  (device mem in use 4425 MiB)
+CHECK bench11s : |<ψ_cpu|ψ_gpu>| - 1 = -3.11e-15   ‖ψ_cpu - ψ_gpu‖ = 8.71e-15   χ_cpu=104 χ_gpu=104
+GPU leak128   χ=128: H_build 0.029  transfer 0.0002  sweep 4.032  total 4.062 s  (device mem in use 6217 MiB)
+CHECK leak128  : |<ψ_cpu|ψ_gpu>| - 1 = -4.44e-16   ‖ψ_cpu - ψ_gpu‖ = 2.67e-15   χ_cpu=128 χ_gpu=128
+GPU leak256   χ=256: H_build 0.029  transfer 0.0002  sweep 8.651  total 8.680 s  (device mem in use 7209 MiB)
+CHECK leak256  : |<ψ_cpu|ψ_gpu>| - 1 = -1.67e-15   ‖ψ_cpu - ψ_gpu‖ = 3.25e-15   χ_cpu=256 χ_gpu=256
+load after: 1.20 1.19 1.49 1/846 29158
