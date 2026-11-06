@@ -74,7 +74,8 @@ S_tilt(ix) = (sin(0.3ix) * cos(0.7), sin(0.3ix) * sin(0.7), cos(0.3ix))
 """
     msh_substrate(g, S; t, μ, α, Δ, J, cutoff, sites, profile_cutoff) -> (H_BdG::MPO, sites)
 
-BdG MPO of the MSH chain (spin texture `S(ix)`) on the substrate `g`. `sites` reuses existing site indices. `profile_cutoff` is the
+BdG MPO of the MSH chain (spin texture `S(ix)`) on the substrate `g`; `S` can instead be a Dict `(ix, iy) => (Sx, Sy, Sz)` of
+magnetic sites anywhere on the lattice (T-junctions; one exchange profile per occupied row, `g.ℓ` unused). `sites` reuses existing site indices. `profile_cutoff` is the
 truncation cutoff (discarded squared weight) of the exchange profiles along x; the default 1e-14 is exact for the static textures,
 while a generic texture (the ramp) needs 1e-20 (with 1e-14 its entries are off by up to ~5e-7). `cutoff` truncates the MPO sums;
 it is relative to the norm of the whole operator, which grows with the lattice, so the absolute error of H grows with N. The
@@ -102,13 +103,16 @@ function msh_substrate(g::Substrate, S; t=1.0, μ=-7.0, α=0.9, Δ=2.4, J=5.8, c
     for (K, hop) in bonds                                         # c†_{r+d} hop c_r and its h.c.
         push!(terms, P(hop, K), P(Matrix(hop'), adjoint_mpo(K)))
     end
-    xs, iy0 = chain_x(g), chain_row(g)
-    for (k, σ) in enumerate((σx, σy, σz))
-        w = zeros(nx)                                             # J S_k(ix) along the chain row
-        for ix in xs
-            w[ix + 1] = J * S(ix)[k]
+    # exchange sites: S(ix) on the chain row, or S::AbstractDict = {(ix, iy) => (Sx, Sy, Sz)} on any set of sites (T-junctions)
+    exch = S isa AbstractDict ? S : Dict((ix, chain_row(g)) => S(ix) for ix in chain_x(g))
+    for iy in sort(unique(last.(collect(keys(exch)))))
+        for (k, σ) in enumerate((σx, σy, σz))
+            w = zeros(nx)                                         # J S_k(ix) along row iy
+            for ((ix, jy), Sv) in exch
+                jy == iy && (w[ix + 1] = J * Sv[k])
+            end
+            maximum(abs, w) > 1e-14 && push!(terms, P(σ, diag_mpo(row_profile_mps(row(iy), w, ypos, xpos; cutoff=profile_cutoff), pos)))
         end
-        maximum(abs, w) > 1e-14 && push!(terms, P(σ, diag_mpo(row_profile_mps(row(iy0), w, ypos, xpos; cutoff=profile_cutoff), pos)))
     end
     H0 = +(terms...; cutoff)
 
