@@ -67,3 +67,53 @@ def ham_sites(Lx, Ly, Sabs, t=1.0, mu=-7.0, alpha=0.9, Delta=2.4, J=5.8):
         if np.abs(v).max() > 1e-14:
             H = H + sp.kron(sp.diags(v), sk)
     return H.tocsr()
+
+# ── exchange_12 on one T-junction (cell 1), as in tjunctions_model.py (L1 = L2 = 14, rot_T = 200, step_T = 0.1) ──
+def smoothstep(t):
+    return 0.0 if t <= 0 else 1.0 if t >= 1 else np.sin(0.5 * np.pi * t) ** 2
+
+class Exchange12:
+    def __init__(self, L1=14, L2=14, rot_T=200.0, step_T=0.1):
+        self.L1, self.L2, self.rot_T, self.step_T = L1, L2, rot_T, step_T
+    def duration(self):
+        return (self.step_T * (4 * self.L1 + 2 * self.L2 + 8) + 1) * self.rot_T
+
+def f_horizontal_12(p, i, t):
+    tau, s, L1, L2 = t / p.rot_T, p.step_T, p.L1, p.L2
+    ss = smoothstep
+    if 0 <= i <= L1:
+        return ss(tau - s * (i + L1 + L2 + 2)) - ss(tau - s * (L1 - i + 3 * L1 + 2 * L2 + 8))
+    if i == L1 + 1:
+        return 0.0
+    if L1 + 2 <= i <= 2 * L1 + 2:
+        return ss(tau - s * (2 * L1 + 2 - i)) - ss(tau - s * (i + L1 + L2 + 2))
+    return 1.0
+
+def f_vertical_12(p, k, t):
+    tau, s, L1, L2 = t / p.rot_T, p.step_T, p.L1, p.L2
+    ss = smoothstep
+    return 1 - ss(tau - s * (k + L1 + 2)) + ss(tau - s * (L2 - k + 3 * L1 + L2 + 5))
+
+def f_braid_12(p, t):
+    "Texture f(c, s, n) of exchange_12 at time t (arm 1: i = L1 + 1 + n; arm 2: i = max(L1 − n, 0); arm 3: k = min(n, L2))."
+    return lambda c, s, n: (f_horizontal_12(p, p.L1 + 1 + n, t) if s == 1 else
+                            f_horizontal_12(p, max(p.L1 - n, 0), t) if s == 2 else
+                            f_vertical_12(p, min(n, p.L2), t))
+
+class TRamp:
+    """H(t) of a T-junction protocol on the 2^L × 2^L substrate: the substrate part is built once, the exchange on the array sites is
+    added at each call. ftex(t) gives the texture f(c, s, n); ncell as in labels()."""
+    def __init__(self, L, ftex, ncell=1, **P):
+        self.L, self.ftex, self.ncell, self.P = L, ftex, ncell, P
+        self.J = P.get("J", 5.8); self.Nx = 2**L; self.N = 4**L
+        self.H_base = m.ham(L, L, 0, **P)
+        self.keys = sorted(place(spins(ftex(0.0), ncell), L, L))
+        self.idx = np.array([ix + iy * self.Nx for (ix, iy) in self.keys])
+    def S(self, t):
+        return place(spins(self.ftex(t), self.ncell), self.L, self.L)
+    def H(self, t):
+        S = self.S(t); Sv = np.array([S[k] for k in self.keys]); out = self.H_base
+        for k, sk in enumerate((m.t0sx, m.t0sy, m.t0sz)):
+            v = np.zeros(self.N); v[self.idx] = self.J * Sv[:, k]
+            out = out + sp.kron(sp.diags(v), sk)
+        return out.tocsr()
